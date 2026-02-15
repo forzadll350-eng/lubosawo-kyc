@@ -3,16 +3,20 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
+import type { User } from "@supabase/supabase-js";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Submission = any;
 
 export default function AdminDashboard() {
   const supabase = createClient();
   const router = useRouter();
-  const [user, setUser] = useState(null);
-  const [submissions, setSubmissions] = useState([]);
+  const [user, setUser] = useState<User | null>(null);
+  const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [stats, setStats] = useState({ pending: 0, approved: 0, rejected: 0, total: 0 });
   const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(true);
-  const [reviewModal, setReviewModal] = useState(null);
+  const [reviewModal, setReviewModal] = useState<Submission | null>(null);
   const [rejectReason, setRejectReason] = useState("");
 
   useEffect(() => { loadData(); }, []);
@@ -24,17 +28,17 @@ export default function AdminDashboard() {
     const { data: subs } = await supabase.from("kyc_submissions").select("*, user_profiles(full_name, email, phone)").order("created_at", { ascending: false });
     if (subs) {
       setSubmissions(subs);
-      setStats({ pending: subs.filter(s => s.status === "pending").length, approved: subs.filter(s => s.status === "approved").length, rejected: subs.filter(s => s.status === "rejected").length, total: subs.length });
+      setStats({ pending: subs.filter((s: Submission) => s.status === "pending").length, approved: subs.filter((s: Submission) => s.status === "approved").length, rejected: subs.filter((s: Submission) => s.status === "rejected").length, total: subs.length });
     }
     setLoading(false);
   }
 
-  async function handleApprove(id) {
+  async function handleApprove(id: string) {
     await supabase.from("kyc_submissions").update({ status: "approved", reviewed_at: new Date().toISOString() }).eq("id", id);
     setReviewModal(null); loadData();
   }
 
-  async function handleReject(id) {
+  async function handleReject(id: string) {
     if (!rejectReason.trim()) { alert("กรุณาระบุเหตุผล"); return; }
     await supabase.from("kyc_submissions").update({ status: "rejected", reject_reason: rejectReason, reviewed_at: new Date().toISOString() }).eq("id", id);
     setReviewModal(null); setRejectReason(""); loadData();
@@ -42,9 +46,9 @@ export default function AdminDashboard() {
 
   async function handleLogout() { await supabase.auth.signOut(); router.push("/"); }
 
-  const filtered = filter === "all" ? submissions : submissions.filter(s => s.status === filter);
-  const chipCls = { pending: "bg-status-orange-light text-status-orange", approved: "bg-status-green-light text-status-green", rejected: "bg-status-red-light text-status-red" };
-  const chipLabel = { pending: "รอตรวจสอบ", approved: "อนุมัติ", rejected: "ปฏิเสธ" };
+  const filtered = filter === "all" ? submissions : submissions.filter((s: Submission) => s.status === filter);
+  const chipCls: Record<string, string> = { pending: "bg-status-orange-light text-status-orange", approved: "bg-status-green-light text-status-green", rejected: "bg-status-red-light text-status-red" };
+  const chipLabel: Record<string, string> = { pending: "รอตรวจสอบ", approved: "อนุมัติ", rejected: "ปฏิเสธ" };
 
   if (loading) return <div className="min-h-screen bg-gray-100 flex items-center justify-center"><span className="inline-block w-8 h-8 border-3 border-navy/20 border-t-navy rounded-full animate-spin" /></div>;
 
@@ -82,7 +86,7 @@ export default function AdminDashboard() {
             <table className="w-full border-collapse">
               <thead><tr className="bg-gray-50">{["ผู้สมัคร","สถานะ","วันที่ส่ง","จัดการ"].map(h=><th key={h} className="px-4 py-3 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200">{h}</th>)}</tr></thead>
               <tbody>
-                {filtered.length===0?<tr><td colSpan={4} className="text-center py-12 text-gray-400 text-sm">ไม่มีรายการ</td></tr>:filtered.map(s=>(
+                {filtered.length===0?<tr><td colSpan={4} className="text-center py-12 text-gray-400 text-sm">ไม่มีรายการ</td></tr>:filtered.map((s: Submission)=>(
                   <tr key={s.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3 border-b border-gray-100"><div className="flex items-center gap-2.5"><div className="w-8 h-8 rounded-full bg-gradient-to-br from-navy-2 to-navy-3 flex items-center justify-center text-white font-bold text-xs shrink-0">{(s.user_profiles?.full_name||"U")[0]}</div><div><div className="text-[13px] font-semibold text-navy">{s.user_profiles?.full_name||"-"}</div><small className="text-[11px] text-gray-400">{s.user_profiles?.email||""}</small></div></div></td>
                     <td className="px-4 py-3 border-b border-gray-100"><span className={"inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold "+(chipCls[s.status]||"")}>{chipLabel[s.status]||s.status}</span></td>
