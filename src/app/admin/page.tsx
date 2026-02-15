@@ -8,6 +8,13 @@ import type { User } from "@supabase/supabase-js";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Submission = any;
 
+interface NavItem {
+  icon: string;
+  label: string;
+  f: string;
+  badge?: number;
+}
+
 export default function AdminDashboard() {
   const supabase = createClient();
   const router = useRouter();
@@ -19,7 +26,8 @@ export default function AdminDashboard() {
   const [reviewModal, setReviewModal] = useState<Submission | null>(null);
   const [rejectReason, setRejectReason] = useState("");
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { loadData(); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function loadData() {
     const { data: { user: u } } = await supabase.auth.getUser();
@@ -50,6 +58,13 @@ export default function AdminDashboard() {
   const chipCls: Record<string, string> = { pending: "bg-status-orange-light text-status-orange", approved: "bg-status-green-light text-status-green", rejected: "bg-status-red-light text-status-red" };
   const chipLabel: Record<string, string> = { pending: "รอตรวจสอบ", approved: "อนุมัติ", rejected: "ปฏิเสธ" };
 
+  const navItems: NavItem[] = [
+    {icon:"📋",label:"คิวตรวจสอบ",f:"pending",badge:stats.pending},
+    {icon:"📊",label:"ทั้งหมด",f:"all"},
+    {icon:"✅",label:"อนุมัติแล้ว",f:"approved"},
+    {icon:"❌",label:"ปฏิเสธ",f:"rejected"}
+  ];
+
   if (loading) return <div className="min-h-screen bg-gray-100 flex items-center justify-center"><span className="inline-block w-8 h-8 border-3 border-navy/20 border-t-navy rounded-full animate-spin" /></div>;
 
   return (
@@ -61,10 +76,10 @@ export default function AdminDashboard() {
         </div>
         <nav className="flex-1 p-3">
           <div className="text-[10px] font-bold text-white/30 tracking-widest uppercase px-2 py-1.5">เมนูหลัก</div>
-          {[{icon:"📋",label:"คิวตรวจสอบ",f:"pending",badge:stats.pending},{icon:"📊",label:"ทั้งหมด",f:"all"},{icon:"✅",label:"อนุมัติแล้ว",f:"approved"},{icon:"❌",label:"ปฏิเสธ",f:"rejected"}].map(n=>(
+          {navItems.map((n) => (
             <button key={n.f} onClick={()=>setFilter(n.f)} className={"flex items-center gap-2.5 w-full text-left px-3 py-2.5 rounded-lg text-[13px] font-medium mb-0.5 transition-all border-none cursor-pointer "+(filter===n.f?"bg-gold/18 text-gold-2 font-bold":"text-white/65 hover:bg-white/7 hover:text-white bg-transparent")}>
               <span className="text-base w-5 text-center">{n.icon}</span>{n.label}
-              {n.badge>0&&<span className="ml-auto bg-status-red text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">{n.badge}</span>}
+              {(n.badge ?? 0) > 0 && <span className="ml-auto bg-status-red text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">{n.badge}</span>}
             </button>
           ))}
         </nav>
@@ -84,7 +99,7 @@ export default function AdminDashboard() {
           <div className="flex items-center gap-3 mb-3.5"><h3 className="text-base font-bold text-navy">รายการ KYC</h3></div>
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
             <table className="w-full border-collapse">
-              <thead><tr className="bg-gray-50">{["ผู้สมัคร","สถานะ","วันที่ส่ง","จัดการ"].map(h=><th key={h} className="px-4 py-3 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200">{h}</th>)}</tr></thead>
+              <thead><tr className="bg-gray-50">{["ผู้สมัคร","สถานะ","วันที่ส่ง","จัดการ"].map((h) => <th key={h} className="px-4 py-3 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200">{h}</th>)}</tr></thead>
               <tbody>
                 {filtered.length===0?<tr><td colSpan={4} className="text-center py-12 text-gray-400 text-sm">ไม่มีรายการ</td></tr>:filtered.map((s: Submission)=>(
                   <tr key={s.id} className="hover:bg-gray-50">
@@ -101,18 +116,18 @@ export default function AdminDashboard() {
       </div>
       {reviewModal&&(
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center" onClick={()=>setReviewModal(null)}>
-          <div className="bg-white rounded-2xl w-full max-w-[700px] max-h-[90vh] overflow-y-auto shadow-lg animate-fade-up" onClick={e=>e.stopPropagation()}>
+          <div className="bg-white rounded-2xl w-full max-w-[700px] max-h-[90vh] overflow-y-auto shadow-lg animate-fade-up" onClick={(e)=>e.stopPropagation()}>
             <div className="px-7 py-5 border-b border-gray-200 flex items-center gap-3.5 sticky top-0 bg-white z-10"><h3 className="text-[17px] font-bold text-navy">ตรวจสอบ KYC</h3><span className={"ml-2 inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold "+(chipCls[reviewModal.status]||"")}>{chipLabel[reviewModal.status]}</span><button onClick={()=>setReviewModal(null)} className="ml-auto w-8 h-8 bg-gray-100 hover:bg-gray-200 rounded-lg flex items-center justify-center cursor-pointer border-none">✕</button></div>
             <div className="p-7">
               <div className="grid grid-cols-2 gap-6 mb-6">
                 <div><h4 className="text-[13px] font-bold text-navy mb-3 pb-2 border-b border-gray-200">💳 บัตรประชาชน</h4><div className="rounded-[10px] border-2 border-gray-200 bg-gray-100 aspect-[3/2] flex items-center justify-center text-[40px]">💳</div></div>
                 <div><h4 className="text-[13px] font-bold text-navy mb-3 pb-2 border-b border-gray-200">📸 Selfie</h4><div className="rounded-[10px] border-2 border-gray-200 bg-gray-100 aspect-[4/3] flex items-center justify-center text-[40px]">📸</div></div>
               </div>
-              <div className="grid grid-cols-2 gap-2 mb-4">{[["ชื่อ",reviewModal.user_profiles?.full_name||"-"],["อีเมล",reviewModal.user_profiles?.email||"-"],["เบอร์โทร",reviewModal.user_profiles?.phone||"-"],["วันที่ส่ง",new Date(reviewModal.created_at).toLocaleDateString("th-TH")]].map(([k,v],i)=><div key={i} className="p-1"><label className="text-[10px] text-gray-400 font-semibold block mb-0.5">{k}</label><span className="text-[13px] text-navy font-semibold">{v}</span></div>)}</div>
+              <div className="grid grid-cols-2 gap-2 mb-4">{([["ชื่อ",reviewModal.user_profiles?.full_name||"-"],["อีเมล",reviewModal.user_profiles?.email||"-"],["เบอร์โทร",reviewModal.user_profiles?.phone||"-"],["วันที่ส่ง",new Date(reviewModal.created_at).toLocaleDateString("th-TH")]] as [string, string][]).map(([k,v],i)=><div key={i} className="p-1"><label className="text-[10px] text-gray-400 font-semibold block mb-0.5">{k}</label><span className="text-[13px] text-navy font-semibold">{v}</span></div>)}</div>
             </div>
             {reviewModal.status==="pending"&&(
               <div className="flex gap-2.5 px-7 py-5 border-t border-gray-200 bg-gray-50 rounded-b-2xl items-end">
-                <textarea value={rejectReason} onChange={e=>setRejectReason(e.target.value)} placeholder="เหตุผลในการปฏิเสธ (ถ้ามี)" className="flex-1 px-3 py-2.5 border-[1.5px] border-gray-200 rounded-lg text-[13px] resize-none h-[70px] outline-none focus:border-navy-3"/>
+                <textarea value={rejectReason} onChange={(e)=>setRejectReason(e.target.value)} placeholder="เหตุผลในการปฏิเสธ (ถ้ามี)" className="flex-1 px-3 py-2.5 border-[1.5px] border-gray-200 rounded-lg text-[13px] resize-none h-[70px] outline-none focus:border-navy-3"/>
                 <button onClick={()=>handleApprove(reviewModal.id)} className="px-7 py-2.5 bg-status-green text-white rounded-lg text-[13px] font-bold cursor-pointer border-none whitespace-nowrap">อนุมัติ</button>
                 <button onClick={()=>handleReject(reviewModal.id)} className="px-6 py-2.5 bg-status-red text-white rounded-lg text-[13px] font-bold cursor-pointer border-none whitespace-nowrap">ปฏิเสธ</button>
               </div>
