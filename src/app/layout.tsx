@@ -9,8 +9,9 @@ const ibmThai = IBM_Plex_Sans_Thai({
 });
 
 export const metadata: Metadata = {
-  title: "ระบบยืนยันตัวตน KYC - อบต.ลุโบะสาวอ",
-  description: "ระบบยืนยันตัวตนดิจิทัล ระดับ IAL2 องค์การบริหารส่วนตำบลลุโบะสาวอ",
+  title: "Lubosawo KYC System",
+  description: "Digital Identity Verification System IAL2",
+  manifest: "/manifest.webmanifest",
 };
 
 export default function RootLayout({
@@ -18,6 +19,11 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="th">
+      <head>
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <link rel="apple-touch-icon" href="/icon-192.png" />
+      </head>
       <body className={`${ibmThai.variable} font-sans`}>{children}<script dangerouslySetInnerHTML={{__html:`if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js")}`}}/></body>
     </html>
   );
