@@ -1,12 +1,25 @@
-﻿const CACHE_NAME = "kyc-lubosawo-v1";
-const urlsToCache = ["/", "/dashboard", "/kyc", "/verify"];
+﻿const CACHE_NAME = "lubosawo-kyc-v1";
 
-self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(urlsToCache)));
+self.addEventListener("install", (e) => {
+  e.waitUntil(
+    caches.open(CACHE_NAME).then((cache) =>
+      cache.addAll(["/", "/icon-192.png", "/icon-512.png"])
+    )
+  );
+  self.skipWaiting();
 });
 
-self.addEventListener("fetch", (event) => {
-  event.respondWith(
-    caches.match(event.request).then((response) => response || fetch(event.request))
+self.addEventListener("activate", (e) => {
+  e.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+    )
+  );
+  self.clients.claim();
+});
+
+self.addEventListener("fetch", (e) => {
+  e.respondWith(
+    fetch(e.request).catch(() => caches.match(e.request))
   );
 });
