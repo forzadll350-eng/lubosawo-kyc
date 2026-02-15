@@ -1,4 +1,4 @@
-﻿import type { Metadata } from "next";
+import type { Metadata } from "next";
 import { IBM_Plex_Sans_Thai } from "next/font/google";
 import "./globals.css";
 
@@ -9,9 +9,8 @@ const ibmThai = IBM_Plex_Sans_Thai({
 });
 
 export const metadata: Metadata = {
-  title: "à¸£à¸°à¸šà¸šà¸¢à¸·à¸™à¸¢à¸±à¸™à¸•à¸±à¸§à¸•à¸™ KYC â€” à¸­à¸šà¸•.à¸¥à¸¸à¹‚à¸šà¸°à¸ªà¸²à¸§à¸­",
-  description:
-    "à¸£à¸°à¸šà¸šà¸¢à¸·à¸™à¸¢à¸±à¸™à¸•à¸±à¸§à¸•à¸™à¸”à¸´à¸ˆà¸´à¸—à¸±à¸¥ à¸£à¸°à¸”à¸±à¸š IAL2 à¸­à¸‡à¸„à¹Œà¸à¸²à¸£à¸šà¸£à¸´à¸«à¸²à¸£à¸ªà¹ˆà¸§à¸™à¸•à¸³à¸šà¸¥à¸¥à¸¸à¹‚à¸šà¸°à¸ªà¸²à¸§à¸­",
+  title: "ระบบยืนยันตัวตน KYC - อบต.ลุโบะสาวอ",
+  description: "ระบบยืนยันตัวตนดิจิทัล ระดับ IAL2 องค์การบริหารส่วนตำบลลุโบะสาวอ",
 };
 
 export default function RootLayout({
@@ -23,4 +22,3 @@ export default function RootLayout({
     </html>
   );
 }
-
