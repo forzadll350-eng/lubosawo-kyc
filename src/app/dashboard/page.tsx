@@ -18,12 +18,16 @@ export default function UserDashboard() {
       const { data: { user: u } } = await supabase.auth.getUser();
       if (!u) { router.push("/"); return; }
       setUser(u);
-      const { data: p } = await supabase.from("user_profiles").select("*, roles(name)").eq("id", u.id).single();
+
+      const { data: p } = await supabase.from("user_profiles").select("*, roles(name)").eq("id", u.id).maybeSingle();
       if (p) setProfile(p);
-      const { data: kyc } = await supabase.from("kyc_submissions").select("*").eq("user_id", u.id).order("created_at", { ascending: false }).limit(1).single();
+
+      const { data: kyc } = await supabase.from("kyc_submissions").select("*").eq("user_id", u.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
       if (kyc) setKycStatus(kyc.status);
-      const { data: sig } = await supabase.from("user_signatures").select("signature_url").eq("user_id", u.id).eq("is_active", true).single();
+
+      const { data: sig } = await supabase.from("user_signatures").select("signature_url").eq("user_id", u.id).eq("is_active", true).maybeSingle();
       if (sig?.signature_url) setSignatureUrl(sig.signature_url);
+
       setLoading(false);
     }
     load();

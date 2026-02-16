@@ -12,7 +12,7 @@ type Log = {
   entity_id: string
   details: any
   created_at: string
-  user_profiles?: { full_name: string; email: string }
+  user_profiles?: { full_name: string; email: string } | null
 }
 
 export default function AuditLogPage() {
@@ -29,13 +29,39 @@ export default function AuditLogPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/'); return }
 
+    // ดึง logs ธรรมดา (ไม่ join)
     const { data } = await supabase
       .from('audit_logs')
-      .select('*, user_profiles:user_id(full_name, email)')
+      .select('*')
       .order('created_at', { ascending: false })
       .limit(200)
 
-    if (data) setLogs(data)
+    if (data && data.length > 0) {
+      // ดึง user profiles แยก
+      const userIds = [...new Set(data.map(l => l.user_id).filter(Boolean))]
+
+      if (userIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from('user_profiles')
+          .select('id, full_name, email')
+          .in('id', userIds)
+
+        const profileMap = new Map(profiles?.map(p => [p.id, p]) || [])
+
+        // แปะ profile เข้า log
+        const enriched = data.map(l => ({
+          ...l,
+          user_profiles: profileMap.get(l.user_id) || null,
+        }))
+
+        setLogs(enriched)
+      } else {
+        setLogs(data)
+      }
+    } else {
+      setLogs([])
+    }
+
     setLoading(false)
   }
 
