@@ -64,6 +64,12 @@ export default function UserDashboard() {
     { label: "อนุมัติ", done: kycStatus === "approved" },
   ];
 
+  const quickLinks = [
+    { icon: "📄", label: "เอกสารของฉัน", desc: "สร้าง/อัปโหลดเอกสาร", path: "/dashboard/documents", color: "from-blue-500 to-blue-600" },
+    { icon: "✍️", label: "งานลงนาม", desc: "เอกสารที่รอลงนาม", path: "/dashboard/signing", color: "from-orange-500 to-orange-600" },
+    { icon: "📜", label: "บันทึกกิจกรรม", desc: "ประวัติการดำเนินการ", path: "/dashboard/audit-log", color: "from-purple-500 to-purple-600" },
+  ];
+
   return (
     <div className="min-h-screen bg-gray-100">
       {/* TOPBAR */}
@@ -107,7 +113,6 @@ export default function UserDashboard() {
               {kycStatus === "approved" ? "คุณผ่านการยืนยันตัวตน IAL 2 เรียบร้อยแล้ว" : kycStatus === "not_submitted" ? "กรุณาส่งข้อมูล KYC เพื่อเริ่มกระบวนการยืนยันตัวตน" : "เจ้าหน้าที่กำลังตรวจสอบข้อมูลของคุณ โปรดรอ 1-2 วัน"}
             </p>
 
-            {/* Timeline */}
             <div className="flex gap-2 items-center flex-wrap">
               {timelineSteps.map((s, i) => (
                 <div key={i} className="flex items-center gap-2">
@@ -132,6 +137,21 @@ export default function UserDashboard() {
               </div>
             )}
           </div>
+        </div>
+
+        {/* QUICK LINKS */}
+        <div className="grid grid-cols-3 gap-5 mb-6">
+          {quickLinks.map((link, i) => (
+            <button
+              key={i}
+              onClick={() => router.push(link.path)}
+              className="bg-white rounded-[14px] p-5 border border-gray-200 shadow-sm hover:-translate-y-0.5 transition-all text-left group"
+            >
+              <div className={"w-10 h-10 rounded-lg bg-gradient-to-br " + link.color + " flex items-center justify-center text-white text-lg mb-3"}>{link.icon}</div>
+              <h4 className="text-sm font-bold text-navy mb-1 group-hover:text-blue-600 transition-colors">{link.label}</h4>
+              <p className="text-[12px] text-gray-400">{link.desc}</p>
+            </button>
+          ))}
         </div>
 
         {/* INFO CARDS GRID */}
