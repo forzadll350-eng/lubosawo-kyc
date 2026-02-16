@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
+import { logAudit } from '@/lib/audit'
 
 type Category = { id: number; code: string; name: string }
 type Doc = { id: string; title: string; document_number: string; description: string; file_url: string; file_name: string; file_size: number; status: string; created_at: string; category_id: number; document_categories?: { name: string }; user_id: string }
@@ -94,6 +95,13 @@ export default function DocumentsPage() {
       })
       if (dbError) throw dbError
 
+      await logAudit(supabase, 'document.create', 'document', undefined, {
+        title: form.title,
+        document_number: form.document_number || null,
+        category_id: form.category_id,
+        file_name: file.name,
+      })
+
       setMessage('✅ สร้างเอกสารสำเร็จ!')
       setForm({ title: '', document_number: '', description: '', category_id: categories[0]?.id || 0 })
       setFile(null)
@@ -151,6 +159,15 @@ export default function DocumentsPage() {
       if (wfError) throw wfError
 
       await supabase.from('documents').update({ status: 'pending_sign' }).eq('id', sendModal.id)
+
+      await logAudit(supabase, 'document.send_sign', 'document', sendModal.id, {
+        title: sendModal.title,
+        signers: selectedSigners.map((s, i) => ({
+          signer_id: s.signer_id,
+          action: s.action,
+          step_order: i + 1,
+        })),
+      })
 
       setMessage('✅ ส่งลงนามสำเร็จ!')
       setSendModal(null)
