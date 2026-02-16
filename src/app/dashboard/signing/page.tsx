@@ -10,7 +10,11 @@ type Task = {
   step_order: number
   required_action: string
   status: string
-  documents?: { title: string; document_number: string; file_url: string; status: string; user_profiles?: { full_name: string } }
+  doc_title?: string
+  doc_number?: string
+  doc_file_url?: string
+  doc_status?: string
+  owner_name?: string
 }
 
 export default function SigningPage() {
@@ -37,16 +41,58 @@ export default function SigningPage() {
       .select('signature_url')
       .eq('user_id', user.id)
       .eq('is_active', true)
-      .single()
+      .maybeSingle()
     if (sig?.signature_url) setSignatureUrl(sig.signature_url)
 
-    // โหลดงานลงนาม
+    // โหลดงานลงนาม (ไม่ join)
     const { data: wf } = await supabase
       .from('signing_workflows')
-      .select('*, documents(title, document_number, file_url, status, user_profiles:user_id(full_name))')
+      .select('*')
       .eq('signer_id', user.id)
       .order('created_at', { ascending: false })
-    if (wf) setTasks(wf)
+
+    if (wf && wf.length > 0) {
+      // ดึง documents แยก
+      const docIds = [...new Set(wf.map(w => w.document_id).filter(Boolean))]
+      const { data: docs } = await supabase
+        .from('documents')
+        .select('id, title, document_number, file_url, status, user_id')
+        .in('id', docIds)
+
+      // ดึง owner profiles แยก
+      const ownerIds = [...new Set(docs?.map(d => d.user_id).filter(Boolean) || [])]
+      let profileMap = new Map()
+      if (ownerIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from('user_profiles')
+          .select('id, full_name')
+          .in('id', ownerIds)
+        profileMap = new Map(profiles?.map(p => [p.id, p.full_name]) || [])
+      }
+
+      const docMap = new Map(docs?.map(d => [d.id, d]) || [])
+
+      const enriched: Task[] = wf.map(w => {
+        const doc = docMap.get(w.document_id)
+        return {
+          id: w.id,
+          document_id: w.document_id,
+          step_order: w.step_order,
+          required_action: w.required_action,
+          status: w.status,
+          doc_title: doc?.title || '-',
+          doc_number: doc?.document_number || '',
+          doc_file_url: doc?.file_url || '',
+          doc_status: doc?.status || '',
+          owner_name: doc ? (profileMap.get(doc.user_id) || '-') : '-',
+        }
+      })
+
+      setTasks(enriched)
+    } else {
+      setTasks([])
+    }
+
     setLoading(false)
   }
 
@@ -72,15 +118,13 @@ export default function SigningPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('ไม่พบผู้ใช้')
 
-      // ดึง signature_id
       const { data: sig } = await supabase
         .from('user_signatures')
         .select('id')
         .eq('user_id', user.id)
         .eq('is_active', true)
-        .single()
+        .maybeSingle()
 
-      // อัปเดต workflow
       const { error: wfError } = await supabase
         .from('signing_workflows')
         .update({
@@ -91,7 +135,6 @@ export default function SigningPage() {
         .eq('id', signModal.id)
       if (wfError) throw wfError
 
-      // เช็คว่าทุกคนลงนามครบหรือยัง
       const { data: remaining } = await supabase
         .from('signing_workflows')
         .select('id')
@@ -100,7 +143,6 @@ export default function SigningPage() {
         .neq('id', signModal.id)
 
       if (!remaining || remaining.length === 0) {
-        // ทุกคนลงนามครบ → อัปเดตเอกสารเป็น signed
         await supabase
           .from('documents')
           .update({ status: 'signed', updated_at: new Date().toISOString() })
@@ -208,18 +250,18 @@ export default function SigningPage() {
                 return (
                   <tr key={task.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3 border-b border-gray-100">
-                      <div className="text-sm font-semibold text-gray-800">{task.documents?.title || '-'}</div>
-                      {task.documents?.document_number && <small className="text-xs text-gray-400">{task.documents.document_number}</small>}
+                      <div className="text-sm font-semibold text-gray-800">{task.doc_title}</div>
+                      {task.doc_number && <small className="text-xs text-gray-400">{task.doc_number}</small>}
                     </td>
-                    <td className="px-4 py-3 border-b border-gray-100 text-xs text-gray-500">{task.documents?.user_profiles?.full_name || '-'}</td>
+                    <td className="px-4 py-3 border-b border-gray-100 text-xs text-gray-500">{task.owner_name}</td>
                     <td className="px-4 py-3 border-b border-gray-100 text-xs">{actionLabel[task.required_action] || task.required_action}</td>
                     <td className="px-4 py-3 border-b border-gray-100">
                       <span className={"px-2 py-0.5 rounded-full text-xs font-bold " + sc.cls}>{sc.label}</span>
                     </td>
                     <td className="px-4 py-3 border-b border-gray-100">
                       <div className="flex gap-2">
-                        {task.documents?.file_url && (
-                          <button onClick={() => handleViewFile(task.documents!.file_url)} className="text-blue-600 text-xs font-semibold hover:underline">ดู</button>
+                        {task.doc_file_url && (
+                          <button onClick={() => handleViewFile(task.doc_file_url!)} className="text-blue-600 text-xs font-semibold hover:underline">ดู</button>
                         )}
                         {task.status === 'pending' && (
                           <>
@@ -242,7 +284,7 @@ export default function SigningPage() {
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={() => setSignModal(null)}>
           <div className="bg-white rounded-xl w-full max-w-md p-6 shadow-lg" onClick={e => e.stopPropagation()}>
             <h3 className="text-lg font-bold mb-4">✍️ ยืนยันการลงนาม</h3>
-            <p className="text-sm text-gray-600 mb-2">เอกสาร: <strong>{signModal.documents?.title}</strong></p>
+            <p className="text-sm text-gray-600 mb-2">เอกสาร: <strong>{signModal.doc_title}</strong></p>
             <p className="text-xs text-gray-400 mb-4">ลายเซ็นของคุณจะถูกแนบไปกับเอกสารนี้</p>
 
             {signatureUrl && (
