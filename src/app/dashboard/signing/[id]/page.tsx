@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter, useParams } from 'next/navigation'
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
+import { PDFDocument, rgb } from 'pdf-lib'
+import fontkit from '@pdf-lib/fontkit'
 import * as QRCode from 'qrcode'
 import * as pdfjsLib from 'pdfjs-dist'
 
@@ -16,7 +17,6 @@ export default function SignDocumentPage() {
   const workflowId = params.id as string
 
   const canvasRefs = useRef<(HTMLCanvasElement | null)[]>([])
-
   const [loading, setLoading] = useState(true)
   const [processing, setProcessing] = useState(false)
   const [message, setMessage] = useState('')
@@ -29,18 +29,12 @@ export default function SignDocumentPage() {
   const [signatureId, setSignatureId] = useState<string | null>(null)
   const [profile, setProfile] = useState<any>(null)
 
-  // ★ เก็บ bytes แยก 2 ชุด — ชุดหนึ่งให้ pdfjs ชุดหนึ่งให้ pdf-lib ★
   const pdfBytesForViewer = useRef<Uint8Array | null>(null)
   const pdfBytesForLib = useRef<Uint8Array | null>(null)
-
   const [pdfReady, setPdfReady] = useState(false)
 
   const [sigPosition, setSigPosition] = useState<{
-    page: number
-    x: number
-    y: number
-    pdfX: number
-    pdfY: number
+    page: number; x: number; y: number; pdfX: number; pdfY: number
   } | null>(null)
 
   useEffect(() => { loadAll() }, [])
@@ -51,52 +45,33 @@ export default function SignDocumentPage() {
       if (!user) { router.push('/'); return }
 
       const { data: wf } = await supabase
-        .from('signing_workflows')
-        .select('*')
-        .eq('id', workflowId)
-        .single()
+        .from('signing_workflows').select('*').eq('id', workflowId).single()
       if (!wf) { setMessage('ไม่พบงานลงนาม'); setLoading(false); return }
       setWorkflow(wf)
 
       const { data: doc } = await supabase
-        .from('documents')
-        .select('*')
-        .eq('id', wf.document_id)
-        .single()
+        .from('documents').select('*').eq('id', wf.document_id).single()
       if (!doc) { setMessage('ไม่พบเอกสาร'); setLoading(false); return }
       setDocData(doc)
 
       const { data: prof } = await supabase
-        .from('user_profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single()
+        .from('user_profiles').select('*').eq('id', user.id).single()
       setProfile(prof)
 
       const { data: sig } = await supabase
-        .from('user_signatures')
-        .select('id, signature_url')
-        .eq('user_id', user.id)
-        .eq('is_active', true)
-        .maybeSingle()
-      if (sig) {
-        setSignatureUrl(sig.signature_url)
-        setSignatureId(sig.id)
-      }
+        .from('user_signatures').select('id, signature_url')
+        .eq('user_id', user.id).eq('is_active', true).maybeSingle()
+      if (sig) { setSignatureUrl(sig.signature_url); setSignatureId(sig.id) }
 
       const { data: fileData } = await supabase.storage
-        .from('official-documents')
-        .createSignedUrl(doc.file_url, 300)
+        .from('official-documents').createSignedUrl(doc.file_url, 300)
 
       if (fileData?.signedUrl) {
         const resp = await fetch(fileData.signedUrl)
         const buffer = await resp.arrayBuffer()
         const originalBytes = new Uint8Array(buffer)
-
-        // ★ Copy แยก 2 ชุด — pdfjs จะ transfer buffer ทำให้ใช้ซ้ำไม่ได้ ★
         pdfBytesForViewer.current = new Uint8Array(originalBytes)
         pdfBytesForLib.current = new Uint8Array(originalBytes)
-
         setPdfReady(true)
       }
     } catch (err: any) {
@@ -106,7 +81,6 @@ export default function SignDocumentPage() {
     }
   }
 
-  // ====== Render PDF ======
   useEffect(() => {
     if (!pdfReady) return
     renderPdf()
@@ -114,49 +88,39 @@ export default function SignDocumentPage() {
 
   async function renderPdf() {
     try {
-      // ★ ส่ง copy ใหม่ทุกครั้ง เพราะ pdfjs อาจ transfer buffer ★
       const bytesToRender = new Uint8Array(pdfBytesForViewer.current!)
-
       const pdf = await pdfjsLib.getDocument({ data: bytesToRender }).promise
-      const numPages = pdf.numPages
-      setPageCount(numPages)
+      setPageCount(pdf.numPages)
 
       await new Promise(r => setTimeout(r, 200))
 
-      for (let i = 0; i < numPages; i++) {
+      for (let i = 0; i < pdf.numPages; i++) {
         const page = await pdf.getPage(i + 1)
         const viewport = page.getViewport({ scale })
         const canvas = canvasRefs.current[i]
         if (!canvas) continue
-
         canvas.width = viewport.width
         canvas.height = viewport.height
-
-        const ctx = canvas.getContext('2d')!
-        await page.render({ canvasContext: ctx, viewport }).promise
+        await page.render({ canvasContext: canvas.getContext('2d')!, viewport }).promise
       }
     } catch (err: any) {
-      console.error('PDF render error:', err)
       setMessage('โหลด PDF ล้มเหลว: ' + err.message)
     }
   }
 
-  // ====== คลิกวางลายเซ็น ======
   function handleCanvasClick(e: React.MouseEvent<HTMLCanvasElement>, pageIndex: number) {
     const canvas = canvasRefs.current[pageIndex]
     if (!canvas) return
-
     const rect = canvas.getBoundingClientRect()
     const clickX = e.clientX - rect.left
     const clickY = e.clientY - rect.top
-
-    const pdfX = clickX / scale
-    const pdfY = (canvas.height / scale) - (clickY / scale)
-
-    setSigPosition({ page: pageIndex, x: clickX, y: clickY, pdfX, pdfY })
+    setSigPosition({
+      page: pageIndex, x: clickX, y: clickY,
+      pdfX: clickX / scale,
+      pdfY: (canvas.height / scale) - (clickY / scale),
+    })
   }
 
-  // ====== ยืนยันลงนาม ======
   async function confirmSign() {
     if (!sigPosition || !pdfBytesForLib.current || !signatureUrl || !signatureId || !workflow || !docData) return
     setProcessing(true)
@@ -172,21 +136,26 @@ export default function SignDocumentPage() {
 
       // ดึงรูปลายเซ็น
       const sigResp = await fetch(signatureUrl)
-      const sigBuf = await sigResp.arrayBuffer()
-      const sigUint8 = new Uint8Array(sigBuf)
+      const sigUint8 = new Uint8Array(await sigResp.arrayBuffer())
 
-      // ★ ใช้ pdfBytesForLib (copy ที่ยังไม่ถูก transfer) ★
+      // ★ โหลดฟอนต์ไทย ★
+      const fontResp = await fetch('/NotoSansThai.ttf')
+      const fontBytes = await fontResp.arrayBuffer()
+
+      // pdf-lib + fontkit
       const pdfDoc = await PDFDocument.load(pdfBytesForLib.current)
+      pdfDoc.registerFontkit(fontkit)
+
+      // ★ embed ฟอนต์ไทย พร้อม subset: true ★
+      const thaiFont = await pdfDoc.embedFont(fontBytes, { subset: true })
+
       const pages = pdfDoc.getPages()
       const targetPage = pages[sigPosition.page]
 
       // embed ลายเซ็น
       let sigImage
-      try {
-        sigImage = await pdfDoc.embedPng(sigUint8)
-      } catch {
-        sigImage = await pdfDoc.embedJpg(sigUint8)
-      }
+      try { sigImage = await pdfDoc.embedPng(sigUint8) }
+      catch { sigImage = await pdfDoc.embedJpg(sigUint8) }
 
       const sigWidth = 150
       const sigHeight = (sigImage.height / sigImage.width) * sigWidth
@@ -194,12 +163,10 @@ export default function SignDocumentPage() {
       targetPage.drawImage(sigImage, {
         x: sigPosition.pdfX - sigWidth / 2,
         y: sigPosition.pdfY - sigHeight / 2,
-        width: sigWidth,
-        height: sigHeight,
+        width: sigWidth, height: sigHeight,
       })
 
-      // ชื่อ + ตำแหน่ง + วันที่
-      const font = await pdfDoc.embedFont(StandardFonts.Helvetica)
+      // ★ ใช้ thaiFont แทน Helvetica ★
       const signDate = new Date().toLocaleDateString('th-TH', {
         year: 'numeric', month: 'long', day: 'numeric'
       })
@@ -207,9 +174,15 @@ export default function SignDocumentPage() {
       const textY = sigPosition.pdfY - sigHeight / 2 - 15
       const textX = sigPosition.pdfX - sigWidth / 2
 
-      targetPage.drawText(`(${profile?.full_name || ''})`, { x: textX, y: textY, size: 9, font, color: rgb(0, 0, 0) })
-      targetPage.drawText(profile?.position || '', { x: textX, y: textY - 13, size: 8, font, color: rgb(0.3, 0.3, 0.3) })
-      targetPage.drawText(signDate, { x: textX, y: textY - 25, size: 8, font, color: rgb(0.3, 0.3, 0.3) })
+      targetPage.drawText(`(${profile?.full_name || ''})`, {
+        x: textX, y: textY, size: 9, font: thaiFont, color: rgb(0, 0, 0)
+      })
+      targetPage.drawText(profile?.position || '', {
+        x: textX, y: textY - 13, size: 8, font: thaiFont, color: rgb(0.3, 0.3, 0.3)
+      })
+      targetPage.drawText(signDate, {
+        x: textX, y: textY - 25, size: 8, font: thaiFont, color: rgb(0.3, 0.3, 0.3)
+      })
 
       // QR Code
       const qrBase64 = qrDataUrl.split(',')[1]
@@ -226,7 +199,7 @@ export default function SignDocumentPage() {
       targetPage.drawText('Scan to verify', {
         x: sigPosition.pdfX + sigWidth / 2 + 10,
         y: sigPosition.pdfY - qrSize / 2 - 12,
-        size: 6, font, color: rgb(0.4, 0.4, 0.4),
+        size: 6, font: thaiFont, color: rgb(0.4, 0.4, 0.4),
       })
 
       // บันทึก PDF
@@ -238,54 +211,36 @@ export default function SignDocumentPage() {
         .upload(signedFileName, modifiedPdfBytes, { contentType: 'application/pdf' })
       if (uploadError) throw new Error('อัปโหลด PDF ล้มเหลว: ' + uploadError.message)
 
-      // hash
       const hashBuffer = await crypto.subtle.digest('SHA-256', modifiedPdfBytes)
       const docHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('')
 
-      // insert document_signatures
       const { data: docSig, error: docSigError } = await supabase
         .from('document_signatures')
         .insert({
-          document_id: docData.id,
-          signer_id: user.id,
-          signature_id: signatureId,
+          document_id: docData.id, signer_id: user.id, signature_id: signatureId,
           sign_action: workflow.required_action === 'approve' ? 'approved' : 'signed',
-          document_hash: docHash,
-          signer_position: profile?.position || '',
+          document_hash: docHash, signer_position: profile?.position || '',
           signer_department: profile?.department || '',
           verification_code: verificationCode,
           signed_at: new Date().toISOString(),
         })
-        .select()
-        .single()
+        .select().single()
       if (docSigError) throw new Error('บันทึกลายเซ็นล้มเหลว: ' + docSigError.message)
 
-      // update workflow
-      await supabase
-        .from('signing_workflows')
+      await supabase.from('signing_workflows')
         .update({ status: 'completed', signature_id: docSig.id, completed_at: new Date().toISOString() })
         .eq('id', workflowId)
 
-      // เช็คครบทุกคนไหม
-      const { data: remaining } = await supabase
-        .from('signing_workflows')
-        .select('id')
-        .eq('document_id', docData.id)
-        .eq('status', 'pending')
-        .neq('id', workflowId)
+      const { data: remaining } = await supabase.from('signing_workflows')
+        .select('id').eq('document_id', docData.id).eq('status', 'pending').neq('id', workflowId)
 
       const newStatus = (!remaining || remaining.length === 0) ? 'signed' : docData.status
-      await supabase
-        .from('documents')
+      await supabase.from('documents')
         .update({ status: newStatus, file_url: signedFileName, updated_at: new Date().toISOString() })
         .eq('id', docData.id)
 
-      // audit
       await supabase.from('audit_logs').insert({
-        user_id: user.id,
-        action: 'document.sign',
-        entity_type: 'document',
-        entity_id: docData.id,
+        user_id: user.id, action: 'document.sign', entity_type: 'document', entity_id: docData.id,
         details: { workflow_id: workflowId, document_signature_id: docSig.id, verification_code: verificationCode },
       })
 
@@ -324,11 +279,9 @@ export default function SignDocumentPage() {
                 ✅ เลือกตำแหน่งแล้ว (หน้า {sigPosition.page + 1})
               </span>
             )}
-            <button
-              onClick={confirmSign}
+            <button onClick={confirmSign}
               disabled={!sigPosition || processing || !signatureUrl}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg font-semibold text-sm hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
+              className="px-4 py-2 bg-green-600 text-white rounded-lg font-semibold text-sm hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed">
               {processing ? '⏳ กำลังลงนาม...' : '✍️ ยืนยันลงนาม'}
             </button>
           </div>
@@ -351,7 +304,6 @@ export default function SignDocumentPage() {
             <button onClick={() => setSigPosition(null)} className="text-xs text-green-600 hover:underline">เลือกใหม่</button>
           </div>
         )}
-
         {message && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 flex justify-between items-center">
             <p className="text-red-700 text-sm">{message}</p>
@@ -372,16 +324,14 @@ export default function SignDocumentPage() {
             <div className="absolute top-2 right-2 bg-gray-800/70 text-white text-xs px-2 py-0.5 rounded z-10">
               หน้า {i + 1}/{pageCount}
             </div>
-            <canvas
-              ref={el => { canvasRefs.current[i] = el }}
+            <canvas ref={el => { canvasRefs.current[i] = el }}
               onClick={(e) => handleCanvasClick(e, i)}
-              className="cursor-crosshair block bg-white shadow-lg"
-            />
+              className="cursor-crosshair block bg-white shadow-lg" />
             {sigPosition && sigPosition.page === i && signatureUrl && (
               <div className="absolute pointer-events-none" style={{ left: sigPosition.x - 75, top: sigPosition.y - 30 }}>
                 <div className="flex items-start gap-2">
                   <div>
-                    <img src={signatureUrl} alt="sig" className="border-2 border-green-400 border-dashed rounded bg-white/80" style={{ width: 150, height: 'auto' }} />
+                    <img src={signatureUrl} alt="sig" className="border-2 border-green-400 border-dashed rounded bg-white/80" style={{ width: 150 }} />
                     <p className="text-xs mt-0.5">({profile?.full_name})</p>
                     <p className="text-gray-500" style={{ fontSize: 10 }}>{profile?.position}</p>
                   </div>
@@ -396,10 +346,9 @@ export default function SignDocumentPage() {
             )}
           </div>
         ))}
-
         {pageCount === 0 && !loading && (
           <div className="text-center py-20 text-gray-400">
-            <p className="text-lg mb-2">📄 ไม่สามารถแสดง PDF ได้</p>
+            <p>📄 ไม่สามารถแสดง PDF ได้</p>
           </div>
         )}
       </div>
