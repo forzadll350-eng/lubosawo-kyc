@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -15,6 +15,8 @@ export default function LandingPage() {
   const [regLname, setRegLname] = useState("");
   const [regEmail, setRegEmail] = useState("");
   const [regPhone, setRegPhone] = useState("");
+  const [regPosition, setRegPosition] = useState("");
+  const [regDepartment, setRegDepartment] = useState("");
   const [regPw, setRegPw] = useState("");
   const [regPw2, setRegPw2] = useState("");
   const router = useRouter();
@@ -41,7 +43,7 @@ export default function LandingPage() {
     setLoading(true);
     const { error: signUpError } = await supabase.auth.signUp({
       email: regEmail, password: regPw,
-      options: { data: { full_name: regFname + " " + regLname, phone: regPhone } },
+      options: { data: { full_name: regFname + " " + regLname, phone: regPhone, position: regPosition, department: regDepartment } },
     });
     if (signUpError) { setError(signUpError.message); setLoading(false); return; }
     alert("สมัครสำเร็จ! กรุณาตรวจสอบอีเมลเพื่อยืนยัน");
@@ -50,6 +52,14 @@ export default function LandingPage() {
   }
 
   const inputCls = "w-full px-3.5 py-2.5 border-[1.5px] border-gray-200 rounded-md text-sm focus:border-navy-3 focus:ring-2 focus:ring-navy-3/10 outline-none transition-all";
+
+  const departmentOptions = [
+    "สำนักปลัด",
+    "กองคลัง",
+    "กองช่าง",
+    "กองการศึกษา ศาสนาและวัฒนธรรม",
+    "กองสาธารณสุขและสิ่งแวดล้อม",
+  ];
 
   return (
     <div className="flex min-h-screen">
@@ -127,6 +137,14 @@ export default function LandingPage() {
               </div>
               <div className="mb-4"><label className="block text-xs font-semibold text-gray-500 mb-1.5">อีเมล <span className="text-status-red">*</span></label><input type="email" value={regEmail} onChange={(e)=>setRegEmail(e.target.value)} placeholder="example@email.com" className={inputCls} required /></div>
               <div className="mb-4"><label className="block text-xs font-semibold text-gray-500 mb-1.5">เบอร์โทร <span className="text-status-red">*</span></label><input type="tel" value={regPhone} onChange={(e)=>setRegPhone(e.target.value)} placeholder="08x-xxx-xxxx" className={inputCls} required /></div>
+              <div className="mb-4"><label className="block text-xs font-semibold text-gray-500 mb-1.5">ตำแหน่ง <span className="text-status-red">*</span></label><input type="text" value={regPosition} onChange={(e)=>setRegPosition(e.target.value)} placeholder="เช่น นักวิเคราะห์นโยบายและแผน" className={inputCls} required /></div>
+              <div className="mb-4">
+                <label className="block text-xs font-semibold text-gray-500 mb-1.5">สังกัด/กอง <span className="text-status-red">*</span></label>
+                <select value={regDepartment} onChange={(e)=>setRegDepartment(e.target.value)} className={inputCls} required>
+                  <option value="">-- เลือกสังกัด --</option>
+                  {departmentOptions.map((d)=>(<option key={d} value={d}>{d}</option>))}
+                </select>
+              </div>
               <div className="mb-4"><label className="block text-xs font-semibold text-gray-500 mb-1.5">รหัสผ่าน <span className="text-status-red">*</span></label><input type="password" value={regPw} onChange={(e)=>setRegPw(e.target.value)} placeholder="8 ตัวอักษรขึ้นไป" className={inputCls} required /></div>
               <div className="mb-6"><label className="block text-xs font-semibold text-gray-500 mb-1.5">ยืนยันรหัสผ่าน <span className="text-status-red">*</span></label><input type="password" value={regPw2} onChange={(e)=>setRegPw2(e.target.value)} placeholder="กรอกรหัสผ่านอีกครั้ง" className={inputCls} required /></div>
               <button type="submit" disabled={loading} className="w-full py-3 bg-gradient-to-br from-navy-2 to-navy-3 text-white rounded-md font-bold text-sm shadow-[0_4px_14px_rgba(17,34,64,0.3)] hover:-translate-y-0.5 transition-all disabled:opacity-60 flex items-center justify-center gap-2">
@@ -155,4 +173,3 @@ export default function LandingPage() {
     </div>
   );
 }
-
