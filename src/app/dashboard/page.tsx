@@ -10,6 +10,7 @@ export default function UserDashboard() {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [kycStatus, setKycStatus] = useState("not_submitted");
+  const [signatureUrl, setSignatureUrl] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -21,6 +22,8 @@ export default function UserDashboard() {
       if (p) setProfile(p);
       const { data: kyc } = await supabase.from("kyc_submissions").select("*").eq("user_id", u.id).order("created_at", { ascending: false }).limit(1).single();
       if (kyc) setKycStatus(kyc.status);
+      const { data: sig } = await supabase.from("user_signatures").select("signature_url").eq("user_id", u.id).eq("is_active", true).single();
+      if (sig?.signature_url) setSignatureUrl(sig.signature_url);
       setLoading(false);
     }
     load();
@@ -177,13 +180,19 @@ export default function UserDashboard() {
           {/* SIGNATURE CARD */}
           <div className="bg-white rounded-[14px] p-6 border border-gray-200 shadow-sm flex flex-col">
             <h4 className="text-sm font-bold text-navy mb-4 flex items-center gap-2">✍️ ลายเซ็นดิจิทัล</h4>
-            <p className="text-[13px] text-gray-500 mb-4">จัดการลายเซ็นของคุณสำหรับลงนามเอกสารอิเล็กทรอนิกส์</p>
+            {signatureUrl ? (
+              <div className="flex-1 flex items-center justify-center border border-gray-100 rounded-lg bg-gray-50 p-3 mb-4">
+                <img src={signatureUrl} alt="ลายเซ็น" className="max-h-20 object-contain" />
+              </div>
+            ) : (
+              <p className="text-[13px] text-gray-400 mb-4 flex-1">ยังไม่มีลายเซ็น กรุณาอัปโหลด</p>
+            )}
             <div className="mt-auto">
               <button
                 onClick={() => router.push("/dashboard/signature")}
                 className="w-full px-4 py-2.5 bg-gradient-to-br from-navy to-navy-3 text-white font-bold text-[13px] rounded-md hover:-translate-y-0.5 transition-all"
               >
-                จัดการลายเซ็น
+                {signatureUrl ? "เปลี่ยนลายเซ็น" : "อัปโหลดลายเซ็น"}
               </button>
             </div>
           </div>
