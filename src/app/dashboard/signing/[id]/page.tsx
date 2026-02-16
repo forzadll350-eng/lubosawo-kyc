@@ -7,7 +7,6 @@ import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
 import * as QRCode from 'qrcode'
 import * as pdfjsLib from 'pdfjs-dist'
 
-// ★ ใช้ worker จาก public folder ★
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
 
 export default function SignDocumentPage() {
@@ -17,18 +16,24 @@ export default function SignDocumentPage() {
   const workflowId = params.id as string
 
   const canvasRefs = useRef<(HTMLCanvasElement | null)[]>([])
+
   const [loading, setLoading] = useState(true)
   const [processing, setProcessing] = useState(false)
   const [message, setMessage] = useState('')
   const [workflow, setWorkflow] = useState<any>(null)
   const [docData, setDocData] = useState<any>(null)
-  const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null)
   const [pageCount, setPageCount] = useState(0)
   const [scale, setScale] = useState(1.5)
 
   const [signatureUrl, setSignatureUrl] = useState<string | null>(null)
   const [signatureId, setSignatureId] = useState<string | null>(null)
   const [profile, setProfile] = useState<any>(null)
+
+  // ★ เก็บ bytes แยก 2 ชุด — ชุดหนึ่งให้ pdfjs ชุดหนึ่งให้ pdf-lib ★
+  const pdfBytesForViewer = useRef<Uint8Array | null>(null)
+  const pdfBytesForLib = useRef<Uint8Array | null>(null)
+
+  const [pdfReady, setPdfReady] = useState(false)
 
   const [sigPosition, setSigPosition] = useState<{
     page: number
@@ -86,7 +91,13 @@ export default function SignDocumentPage() {
       if (fileData?.signedUrl) {
         const resp = await fetch(fileData.signedUrl)
         const buffer = await resp.arrayBuffer()
-        setPdfBytes(new Uint8Array(buffer))
+        const originalBytes = new Uint8Array(buffer)
+
+        // ★ Copy แยก 2 ชุด — pdfjs จะ transfer buffer ทำให้ใช้ซ้ำไม่ได้ ★
+        pdfBytesForViewer.current = new Uint8Array(originalBytes)
+        pdfBytesForLib.current = new Uint8Array(originalBytes)
+
+        setPdfReady(true)
       }
     } catch (err: any) {
       setMessage('โหลดข้อมูลล้มเหลว: ' + err.message)
@@ -97,13 +108,16 @@ export default function SignDocumentPage() {
 
   // ====== Render PDF ======
   useEffect(() => {
-    if (!pdfBytes) return
+    if (!pdfReady) return
     renderPdf()
-  }, [pdfBytes, scale])
+  }, [pdfReady, scale])
 
   async function renderPdf() {
     try {
-      const pdf = await pdfjsLib.getDocument({ data: pdfBytes! }).promise
+      // ★ ส่ง copy ใหม่ทุกครั้ง เพราะ pdfjs อาจ transfer buffer ★
+      const bytesToRender = new Uint8Array(pdfBytesForViewer.current!)
+
+      const pdf = await pdfjsLib.getDocument({ data: bytesToRender }).promise
       const numPages = pdf.numPages
       setPageCount(numPages)
 
@@ -144,8 +158,9 @@ export default function SignDocumentPage() {
 
   // ====== ยืนยันลงนาม ======
   async function confirmSign() {
-    if (!sigPosition || !pdfBytes || !signatureUrl || !signatureId || !workflow || !docData) return
+    if (!sigPosition || !pdfBytesForLib.current || !signatureUrl || !signatureId || !workflow || !docData) return
     setProcessing(true)
+    setMessage('')
 
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -155,14 +170,17 @@ export default function SignDocumentPage() {
       const verifyUrl = `${window.location.origin}/verify/${verificationCode}`
       const qrDataUrl = await QRCode.toDataURL(verifyUrl, { width: 100, margin: 1 })
 
+      // ดึงรูปลายเซ็น
       const sigResp = await fetch(signatureUrl)
       const sigBuf = await sigResp.arrayBuffer()
       const sigUint8 = new Uint8Array(sigBuf)
 
-      const pdfDoc = await PDFDocument.load(pdfBytes)
+      // ★ ใช้ pdfBytesForLib (copy ที่ยังไม่ถูก transfer) ★
+      const pdfDoc = await PDFDocument.load(pdfBytesForLib.current)
       const pages = pdfDoc.getPages()
       const targetPage = pages[sigPosition.page]
 
+      // embed ลายเซ็น
       let sigImage
       try {
         sigImage = await pdfDoc.embedPng(sigUint8)
@@ -180,6 +198,7 @@ export default function SignDocumentPage() {
         height: sigHeight,
       })
 
+      // ชื่อ + ตำแหน่ง + วันที่
       const font = await pdfDoc.embedFont(StandardFonts.Helvetica)
       const signDate = new Date().toLocaleDateString('th-TH', {
         year: 'numeric', month: 'long', day: 'numeric'
@@ -192,6 +211,7 @@ export default function SignDocumentPage() {
       targetPage.drawText(profile?.position || '', { x: textX, y: textY - 13, size: 8, font, color: rgb(0.3, 0.3, 0.3) })
       targetPage.drawText(signDate, { x: textX, y: textY - 25, size: 8, font, color: rgb(0.3, 0.3, 0.3) })
 
+      // QR Code
       const qrBase64 = qrDataUrl.split(',')[1]
       const qrBytes = Uint8Array.from(atob(qrBase64), c => c.charCodeAt(0))
       const qrImage = await pdfDoc.embedPng(qrBytes)
@@ -209,6 +229,7 @@ export default function SignDocumentPage() {
         size: 6, font, color: rgb(0.4, 0.4, 0.4),
       })
 
+      // บันทึก PDF
       const modifiedPdfBytes = await pdfDoc.save()
       const signedFileName = `signed_${Date.now()}.pdf`
 
@@ -217,9 +238,11 @@ export default function SignDocumentPage() {
         .upload(signedFileName, modifiedPdfBytes, { contentType: 'application/pdf' })
       if (uploadError) throw new Error('อัปโหลด PDF ล้มเหลว: ' + uploadError.message)
 
+      // hash
       const hashBuffer = await crypto.subtle.digest('SHA-256', modifiedPdfBytes)
       const docHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('')
 
+      // insert document_signatures
       const { data: docSig, error: docSigError } = await supabase
         .from('document_signatures')
         .insert({
@@ -237,11 +260,13 @@ export default function SignDocumentPage() {
         .single()
       if (docSigError) throw new Error('บันทึกลายเซ็นล้มเหลว: ' + docSigError.message)
 
+      // update workflow
       await supabase
         .from('signing_workflows')
         .update({ status: 'completed', signature_id: docSig.id, completed_at: new Date().toISOString() })
         .eq('id', workflowId)
 
+      // เช็คครบทุกคนไหม
       const { data: remaining } = await supabase
         .from('signing_workflows')
         .select('id')
@@ -255,6 +280,7 @@ export default function SignDocumentPage() {
         .update({ status: newStatus, file_url: signedFileName, updated_at: new Date().toISOString() })
         .eq('id', docData.id)
 
+      // audit
       await supabase.from('audit_logs').insert({
         user_id: user.id,
         action: 'document.sign',
@@ -327,8 +353,9 @@ export default function SignDocumentPage() {
         )}
 
         {message && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 flex justify-between items-center">
             <p className="text-red-700 text-sm">{message}</p>
+            <button onClick={() => setMessage('')} className="text-red-400 hover:text-red-600">✕</button>
           </div>
         )}
       </div>
@@ -373,7 +400,6 @@ export default function SignDocumentPage() {
         {pageCount === 0 && !loading && (
           <div className="text-center py-20 text-gray-400">
             <p className="text-lg mb-2">📄 ไม่สามารถแสดง PDF ได้</p>
-            <p className="text-sm">กรุณาตรวจสอบว่าไฟล์เป็น PDF ที่ถูกต้อง</p>
           </div>
         )}
       </div>
