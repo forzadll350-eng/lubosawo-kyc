@@ -17,6 +17,17 @@ type Task = {
   owner_name?: string
 }
 
+type DocSignature = {
+  id: string
+  sign_action: string
+  signer_position: string
+  signer_department: string
+  rejection_reason: string | null
+  signed_at: string
+  signature_url?: string
+  full_name?: string
+}
+
 export default function SigningPage() {
   const supabase = createClient()
   const router = useRouter()
@@ -28,6 +39,11 @@ export default function SigningPage() {
   const [signing, setSigning] = useState(false)
   const [message, setMessage] = useState('')
   const [filter, setFilter] = useState<'pending' | 'completed' | 'all'>('pending')
+
+  // Modal ดูลายเซ็นในเอกสาร
+  const [docSignatures, setDocSignatures] = useState<DocSignature[]>([])
+  const [showSigModal, setShowSigModal] = useState(false)
+  const [sigModalTitle, setSigModalTitle] = useState('')
 
   useEffect(() => { loadData() }, [])
 
@@ -44,7 +60,7 @@ export default function SigningPage() {
       .maybeSingle()
     if (sig?.signature_url) setSignatureUrl(sig.signature_url)
 
-    // โหลดงานลงนาม (ไม่ join)
+    // โหลดงานลงนาม
     const { data: wf } = await supabase
       .from('signing_workflows')
       .select('*')
@@ -52,14 +68,12 @@ export default function SigningPage() {
       .order('created_at', { ascending: false })
 
     if (wf && wf.length > 0) {
-      // ดึง documents แยก
       const docIds = [...new Set(wf.map(w => w.document_id).filter(Boolean))]
       const { data: docs } = await supabase
         .from('documents')
         .select('id, title, document_number, file_url, status, user_id')
         .in('id', docIds)
 
-      // ดึง owner profiles แยก
       const ownerIds = [...new Set(docs?.map(d => d.user_id).filter(Boolean) || [])]
       let profileMap = new Map()
       if (ownerIds.length > 0) {
@@ -102,6 +116,55 @@ export default function SigningPage() {
     else alert('ไม่สามารถเปิดไฟล์ได้')
   }
 
+  // ====== ดูลายเซ็นที่แนบกับเอกสาร ======
+  async function handleViewSignatures(task: Task) {
+    const { data: sigs } = await supabase
+      .from('document_signatures')
+      .select('*')
+      .eq('document_id', task.document_id)
+      .order('signed_at', { ascending: true })
+
+    if (sigs && sigs.length > 0) {
+      // ดึง signature_url จาก user_signatures
+      const sigIds = sigs.filter(s => s.signature_id).map(s => s.signature_id)
+      let userSigMap = new Map()
+      if (sigIds.length > 0) {
+        const { data: userSigs } = await supabase
+          .from('user_signatures')
+          .select('id, signature_url')
+          .in('id', sigIds)
+        userSigMap = new Map(userSigs?.map(u => [u.id, u.signature_url]) || [])
+      }
+
+      // ดึงชื่อผู้ลงนาม
+      const signerIds = [...new Set(sigs.map(s => s.signer_id))]
+      const { data: profiles } = await supabase
+        .from('user_profiles')
+        .select('id, full_name')
+        .in('id', signerIds)
+      const nameMap = new Map(profiles?.map(p => [p.id, p.full_name]) || [])
+
+      const enriched: DocSignature[] = sigs.map(s => ({
+        id: s.id,
+        sign_action: s.sign_action,
+        signer_position: s.signer_position || '',
+        signer_department: s.signer_department || '',
+        rejection_reason: s.rejection_reason,
+        signed_at: s.signed_at,
+        signature_url: userSigMap.get(s.signature_id) || '',
+        full_name: nameMap.get(s.signer_id) || '-',
+      }))
+
+      setDocSignatures(enriched)
+    } else {
+      setDocSignatures([])
+    }
+
+    setSigModalTitle(task.doc_title || 'เอกสาร')
+    setShowSigModal(true)
+  }
+
+  // ====== กดลงนาม ======
   async function handleSign(task: Task) {
     if (!signatureUrl) {
       setMessage('❌ คุณยังไม่มีลายเซ็น กรุณาไปอัปโหลดลายเซ็นก่อน')
@@ -110,6 +173,7 @@ export default function SigningPage() {
     setSignModal(task)
   }
 
+  // ====== ยืนยันลงนาม (แก้ไขแล้ว — เพิ่ม document_signatures) ======
   async function confirmSign() {
     if (!signModal) return
     setSigning(true)
@@ -118,6 +182,7 @@ export default function SigningPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('ไม่พบผู้ใช้')
 
+      // 1. ดึงลายเซ็น active ของ user
       const { data: sig } = await supabase
         .from('user_signatures')
         .select('id')
@@ -125,18 +190,47 @@ export default function SigningPage() {
         .eq('is_active', true)
         .maybeSingle()
 
-      // ✅ เปลี่ยนจาก 'signed' → 'completed' ให้ตรง constraint
+      if (!sig) throw new Error('ไม่พบลายเซ็น กรุณาอัปโหลดก่อน')
+
+      // 2. ดึง profile ตำแหน่ง + สังกัด
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('full_name, position, department')
+        .eq('id', user.id)
+        .single()
+
+      // 3. ★ INSERT ลง document_signatures ★ (จุดที่ขาดไป!)
+      const docHash = btoa(`${signModal.document_id}-${Date.now()}-${user.id}`)
+
+      const { data: docSig, error: docSigError } = await supabase
+        .from('document_signatures')
+        .insert({
+          document_id: signModal.document_id,
+          signer_id: user.id,
+          signature_id: sig.id,
+          sign_action: signModal.required_action === 'approve' ? 'approved' : 'signed',
+          document_hash: docHash,
+          signer_position: profile?.position || '',
+          signer_department: profile?.department || '',
+          signed_at: new Date().toISOString(),
+        })
+        .select()
+        .single()
+
+      if (docSigError) throw new Error('บันทึกลายเซ็นล้มเหลว: ' + docSigError.message)
+
+      // 4. Update signing_workflows → completed
       const { error: wfError } = await supabase
         .from('signing_workflows')
         .update({
           status: 'completed',
-          signature_id: sig?.id || null,
+          signature_id: docSig.id,
           completed_at: new Date().toISOString(),
         })
         .eq('id', signModal.id)
       if (wfError) throw wfError
 
-      // เช็คว่าทุกคนลงนามครบหรือยัง
+      // 5. เช็คว่าทุกคนลงนามครบหรือยัง
       const { data: remaining } = await supabase
         .from('signing_workflows')
         .select('id')
@@ -151,6 +245,15 @@ export default function SigningPage() {
           .eq('id', signModal.document_id)
       }
 
+      // 6. Audit log
+      await supabase.from('audit_logs').insert({
+        user_id: user.id,
+        action: 'document.sign',
+        entity_type: 'document',
+        entity_id: signModal.document_id,
+        details: { workflow_id: signModal.id, document_signature_id: docSig.id },
+      })
+
       setMessage('✅ ลงนามสำเร็จ!')
       setSignModal(null)
       loadData()
@@ -161,20 +264,58 @@ export default function SigningPage() {
     }
   }
 
+  // ====== ปฏิเสธ (แก้ไขแล้ว — เพิ่ม document_signatures) ======
   async function handleReject(task: Task) {
     const reason = prompt('ระบุเหตุผลในการปฏิเสธ:')
     if (!reason) return
 
     try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('ไม่พบผู้ใช้')
+
+      // ดึง profile
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('position, department')
+        .eq('id', user.id)
+        .single()
+
+      const docHash = btoa(`${task.document_id}-${Date.now()}-${user.id}`)
+
+      // ★ INSERT ลง document_signatures แบบ rejected ★
+      await supabase
+        .from('document_signatures')
+        .insert({
+          document_id: task.document_id,
+          signer_id: user.id,
+          sign_action: 'rejected',
+          document_hash: docHash,
+          signer_position: profile?.position || '',
+          signer_department: profile?.department || '',
+          rejection_reason: reason,
+          signed_at: new Date().toISOString(),
+        })
+
+      // Update signing_workflows
       await supabase
         .from('signing_workflows')
         .update({ status: 'rejected', completed_at: new Date().toISOString() })
         .eq('id', task.id)
 
+      // Update document status
       await supabase
         .from('documents')
         .update({ status: 'rejected', updated_at: new Date().toISOString() })
         .eq('id', task.document_id)
+
+      // Audit log
+      await supabase.from('audit_logs').insert({
+        user_id: user.id,
+        action: 'document.reject',
+        entity_type: 'document',
+        entity_id: task.document_id,
+        details: { workflow_id: task.id, reason },
+      })
 
       setMessage('❌ ปฏิเสธเอกสารแล้ว')
       loadData()
@@ -183,7 +324,6 @@ export default function SigningPage() {
     }
   }
 
-  // ✅ เปลี่ยน filter จาก 'signed' → 'completed'
   const filtered = filter === 'all' ? tasks : tasks.filter(t => t.status === filter)
 
   const statusConfig: Record<string, { label: string; cls: string }> = {
@@ -218,7 +358,12 @@ export default function SigningPage() {
           </div>
         )}
 
-        {message && <p className="text-center text-sm mb-4 font-medium">{message}</p>}
+        {message && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 flex items-center justify-between">
+            <span className="text-sm">{message}</span>
+            <button onClick={() => setMessage('')} className="text-gray-400 hover:text-gray-600 text-lg">×</button>
+          </div>
+        )}
 
         <div className="flex gap-2 mb-4">
           {[
@@ -272,6 +417,9 @@ export default function SigningPage() {
                             <button onClick={() => handleReject(task)} className="text-red-600 text-xs font-semibold hover:underline">ปฏิเสธ</button>
                           </>
                         )}
+                        {task.status === 'completed' && (
+                          <button onClick={() => handleViewSignatures(task)} className="text-purple-600 text-xs font-semibold hover:underline">ดูลายเซ็น</button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -282,7 +430,7 @@ export default function SigningPage() {
         </div>
       </div>
 
-      {/* SIGN CONFIRMATION MODAL */}
+      {/* ====== SIGN CONFIRMATION MODAL ====== */}
       {signModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={() => setSignModal(null)}>
           <div className="bg-white rounded-xl w-full max-w-md p-6 shadow-lg" onClick={e => e.stopPropagation()}>
@@ -302,6 +450,51 @@ export default function SigningPage() {
                 {signing ? 'กำลังลงนาม...' : '✍️ ยืนยันลงนาม'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ====== VIEW SIGNATURES MODAL ====== */}
+      {showSigModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={() => setShowSigModal(false)}>
+          <div className="bg-white rounded-xl w-full max-w-lg p-6 shadow-lg max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-bold mb-1">📋 ลายเซ็นในเอกสาร</h3>
+            <p className="text-sm text-gray-500 mb-4">{sigModalTitle}</p>
+
+            {docSignatures.length === 0 ? (
+              <p className="text-gray-400 text-sm text-center py-8">ยังไม่มีผู้ลงนาม</p>
+            ) : (
+              <div className="space-y-3">
+                {docSignatures.map((sig) => (
+                  <div key={sig.id} className="border rounded-lg p-4">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="font-semibold text-sm">{sig.full_name}</p>
+                        {sig.signer_position && <p className="text-xs text-gray-500">{sig.signer_position}</p>}
+                        {sig.signer_department && <p className="text-xs text-gray-500">{sig.signer_department}</p>}
+                        <p className="text-xs text-gray-400 mt-1">
+                          {new Date(sig.signed_at).toLocaleString('th-TH')}
+                        </p>
+                      </div>
+                      <span className={"px-2 py-0.5 rounded-full text-xs font-bold " +
+                        (sig.sign_action === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700')}>
+                        {sig.sign_action === 'rejected' ? '❌ ปฏิเสธ'
+                          : sig.sign_action === 'approved' ? '✅ อนุมัติแล้ว'
+                          : '✅ ลงนามแล้ว'}
+                      </span>
+                    </div>
+                    {sig.signature_url && sig.sign_action !== 'rejected' && (
+                      <img src={sig.signature_url} alt="ลายเซ็น" className="h-16 mt-3 border rounded p-1 bg-white" />
+                    )}
+                    {sig.rejection_reason && (
+                      <p className="text-red-600 text-sm mt-2 bg-red-50 p-2 rounded">เหตุผล: {sig.rejection_reason}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <button onClick={() => setShowSigModal(false)} className="mt-4 w-full py-2.5 bg-gray-100 text-gray-600 rounded-lg font-semibold hover:bg-gray-200">ปิด</button>
           </div>
         </div>
       )}
