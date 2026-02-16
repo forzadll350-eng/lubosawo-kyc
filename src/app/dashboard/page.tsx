@@ -132,7 +132,7 @@ export default function UserDashboard() {
         </div>
 
         {/* INFO CARDS GRID */}
-        <div className="grid grid-cols-2 gap-5">
+        <div className="grid grid-cols-3 gap-5">
           <div className="bg-white rounded-[14px] p-6 border border-gray-200 shadow-sm">
             <h4 className="text-sm font-bold text-navy mb-4 flex items-center gap-2">👤 ข้อมูลส่วนตัว</h4>
             <div className="space-y-0">
@@ -171,6 +171,20 @@ export default function UserDashboard() {
                   )}
                 </div>
               ))}
+            </div>
+          </div>
+
+          {/* SIGNATURE CARD */}
+          <div className="bg-white rounded-[14px] p-6 border border-gray-200 shadow-sm flex flex-col">
+            <h4 className="text-sm font-bold text-navy mb-4 flex items-center gap-2">✍️ ลายเซ็นดิจิทัล</h4>
+            <p className="text-[13px] text-gray-500 mb-4">จัดการลายเซ็นของคุณสำหรับลงนามเอกสารอิเล็กทรอนิกส์</p>
+            <div className="mt-auto">
+              <button
+                onClick={() => router.push("/dashboard/signature")}
+                className="w-full px-4 py-2.5 bg-gradient-to-br from-navy to-navy-3 text-white font-bold text-[13px] rounded-md hover:-translate-y-0.5 transition-all"
+              >
+                จัดการลายเซ็น
+              </button>
             </div>
           </div>
         </div>
