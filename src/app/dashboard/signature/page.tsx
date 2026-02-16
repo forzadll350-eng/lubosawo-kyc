@@ -2,24 +2,91 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
-
 import { useRouter } from 'next/navigation'
 
 export default function SignaturePage() {
   const supabase = createClient()
   const router = useRouter()
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const drawCanvasRef = useRef<HTMLCanvasElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  const [tab, setTab] = useState<'upload' | 'draw'>('upload')
   const [preview, setPreview] = useState<string | null>(null)
   const [processedPreview, setProcessedPreview] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [existingSignature, setExistingSignature] = useState<string | null>(null)
+  const [isDrawing, setIsDrawing] = useState(false)
+  const [hasDrawn, setHasDrawn] = useState(false)
 
   useEffect(() => {
     loadExistingSignature()
   }, [])
+
+  useEffect(() => {
+    if (tab === 'draw') initDrawCanvas()
+  }, [tab])
+
+  function initDrawCanvas() {
+    const canvas = drawCanvasRef.current
+    if (!canvas) return
+    canvas.width = canvas.offsetWidth * 2
+    canvas.height = canvas.offsetHeight * 2
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    ctx.scale(2, 2)
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.lineWidth = 2.5
+    ctx.strokeStyle = '#1a237e'
+    setHasDrawn(false)
+  }
+
+  function getDrawPos(e: React.MouseEvent | React.TouchEvent) {
+    const canvas = drawCanvasRef.current
+    if (!canvas) return { x: 0, y: 0 }
+    const rect = canvas.getBoundingClientRect()
+    if ('touches' in e) {
+      return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top }
+    }
+    return { x: (e as React.MouseEvent).clientX - rect.left, y: (e as React.MouseEvent).clientY - rect.top }
+  }
+
+  function startDraw(e: React.MouseEvent | React.TouchEvent) {
+    e.preventDefault()
+    const ctx = drawCanvasRef.current?.getContext('2d')
+    if (!ctx) return
+    setIsDrawing(true)
+    const pos = getDrawPos(e)
+    ctx.beginPath()
+    ctx.moveTo(pos.x, pos.y)
+  }
+
+  function draw(e: React.MouseEvent | React.TouchEvent) {
+    e.preventDefault()
+    if (!isDrawing) return
+    const ctx = drawCanvasRef.current?.getContext('2d')
+    if (!ctx) return
+    const pos = getDrawPos(e)
+    ctx.lineTo(pos.x, pos.y)
+    ctx.stroke()
+    setHasDrawn(true)
+  }
+
+  function stopDraw() {
+    setIsDrawing(false)
+  }
+
+  function clearDraw() {
+    const canvas = drawCanvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    setHasDrawn(false)
+    setMessage('')
+  }
 
   async function loadExistingSignature() {
     const { data: { user } } = await supabase.auth.getUser()
@@ -37,7 +104,7 @@ export default function SignaturePage() {
     }
   }
 
-    function removeBackground(file: File): Promise<Blob> {
+  function removeBackground(file: File): Promise<Blob> {
     return new Promise((resolve, reject) => {
       const img = new Image()
       img.onload = () => {
@@ -58,17 +125,14 @@ export default function SignaturePage() {
           const g = data[i + 1]
           const b = data[i + 2]
 
-          // เก็บเฉพาะสีน้ำเงิน: B สูงกว่า R และ G อย่างชัดเจน
           const isBlue = b > 80 && b > r * 1.3 && b > g * 1.2
 
           if (isBlue) {
-            // เก็บไว้ — ทำให้เข้มขึ้น
             data[i] = Math.max(0, r - 30)
             data[i + 1] = Math.max(0, g - 30)
             data[i + 2] = Math.min(255, b + 20)
             data[i + 3] = 255
           } else {
-            // ลบทิ้ง → โปร่งใส
             data[i + 3] = 0
           }
         }
@@ -84,7 +148,6 @@ export default function SignaturePage() {
       img.src = URL.createObjectURL(file)
     })
   }
-
 
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -113,12 +176,21 @@ export default function SignaturePage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('ไม่พบผู้ใช้')
 
-      const canvas = canvasRef.current
-      if (!canvas) throw new Error('ไม่พบ canvas')
+      let blob: Blob
 
-      const blob = await new Promise<Blob>((resolve, reject) => {
-        canvas.toBlob((b) => b ? resolve(b) : reject('Cannot create blob'), 'image/png')
-      })
+      if (tab === 'draw') {
+        const canvas = drawCanvasRef.current
+        if (!canvas) throw new Error('ไม่พบ canvas')
+        blob = await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob((b) => b ? resolve(b) : reject('Cannot create blob'), 'image/png')
+        })
+      } else {
+        const canvas = canvasRef.current
+        if (!canvas) throw new Error('ไม่พบ canvas')
+        blob = await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob((b) => b ? resolve(b) : reject('Cannot create blob'), 'image/png')
+        })
+      }
 
       const fileName = `${user.id}/signature_${Date.now()}.png`
 
@@ -154,6 +226,7 @@ export default function SignaturePage() {
       setMessage('✅ บันทึกลายเซ็นสำเร็จ!')
       setPreview(null)
       setProcessedPreview(null)
+      if (tab === 'draw') clearDraw()
     } catch (err: any) {
       setMessage(`❌ เกิดข้อผิดพลาด: ${err.message}`)
     } finally {
@@ -186,52 +259,113 @@ export default function SignaturePage() {
           </div>
         )}
 
-        <div className="bg-white rounded-lg shadow p-4 mb-6">
-          <h2 className="font-semibold mb-2">อัปโหลดลายเซ็นใหม่</h2>
-          <p className="text-sm text-gray-500 mb-3">
-            ถ่ายรูปหรือสแกนลายเซ็นบนกระดาษขาว ระบบจะตัดพื้นหลังให้อัตโนมัติ
-          </p>
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/jpg"
-            onChange={handleFileSelect}
-            className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-          />
+        {/* แท็บเลือก */}
+        <div className="flex mb-4 bg-white rounded-lg shadow overflow-hidden">
+          <button
+            onClick={() => { setTab('upload'); setMessage(''); }}
+            className={"flex-1 py-3 text-sm font-semibold transition-colors " + (tab === 'upload' ? "bg-blue-600 text-white" : "text-gray-500 hover:bg-gray-50")}
+          >
+            📷 อัปโหลดรูป
+          </button>
+          <button
+            onClick={() => { setTab('draw'); setMessage(''); }}
+            className={"flex-1 py-3 text-sm font-semibold transition-colors " + (tab === 'draw' ? "bg-blue-600 text-white" : "text-gray-500 hover:bg-gray-50")}
+          >
+            ✍️ วาดลายเซ็น
+          </button>
         </div>
 
-        {preview && (
-          <div className="grid grid-cols-2 gap-4 mb-6">
-            <div className="bg-white rounded-lg shadow p-4">
-              <h3 className="text-sm font-semibold mb-2">ต้นฉบับ</h3>
-              <img src={preview} alt="ต้นฉบับ" className="max-h-40 object-contain mx-auto" />
+        {/* แท็บอัปโหลด */}
+        {tab === 'upload' && (
+          <>
+            <div className="bg-white rounded-lg shadow p-4 mb-6">
+              <h2 className="font-semibold mb-2">อัปโหลดลายเซ็นใหม่</h2>
+              <p className="text-sm text-gray-500 mb-3">
+                ถ่ายรูปหรือสแกนลายเซ็นบนกระดาษขาว ระบบจะตัดพื้นหลังให้อัตโนมัติ
+              </p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/jpg"
+                onChange={handleFileSelect}
+                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+              />
             </div>
-            <div className="bg-white rounded-lg shadow p-4">
-              <h3 className="text-sm font-semibold mb-2">ตัดพื้นหลังแล้ว</h3>
-              {processedPreview ? (
-                <img src={processedPreview} alt="ตัดพื้นหลัง" className="max-h-40 object-contain mx-auto" style={{ background: 'repeating-conic-gradient(#ddd 0% 25%, transparent 0% 50%) 50% / 16px 16px' }} />
-              ) : (
-                <p className="text-gray-400 text-sm">กำลังประมวลผล...</p>
-              )}
-            </div>
-          </div>
+
+            {preview && (
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <div className="bg-white rounded-lg shadow p-4">
+                  <h3 className="text-sm font-semibold mb-2">ต้นฉบับ</h3>
+                  <img src={preview} alt="ต้นฉบับ" className="max-h-40 object-contain mx-auto" />
+                </div>
+                <div className="bg-white rounded-lg shadow p-4">
+                  <h3 className="text-sm font-semibold mb-2">ตัดพื้นหลังแล้ว</h3>
+                  {processedPreview ? (
+                    <img src={processedPreview} alt="ตัดพื้นหลัง" className="max-h-40 object-contain mx-auto" style={{ background: 'repeating-conic-gradient(#ddd 0% 25%, transparent 0% 50%) 50% / 16px 16px' }} />
+                  ) : (
+                    <p className="text-gray-400 text-sm">กำลังประมวลผล...</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <canvas ref={canvasRef} className="hidden" />
+
+            {processedPreview && (
+              <button
+                onClick={handleSave}
+                disabled={loading}
+                className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700 disabled:opacity-50"
+              >
+                {loading ? 'กำลังบันทึก...' : '💾 บันทึกลายเซ็น'}
+              </button>
+            )}
+          </>
         )}
 
-        <canvas ref={canvasRef} className="hidden" />
+        {/* แท็บวาด */}
+        {tab === 'draw' && (
+          <>
+            <div className="bg-white rounded-lg shadow p-4 mb-6">
+              <h2 className="font-semibold mb-2">วาดลายเซ็น</h2>
+              <p className="text-sm text-gray-500 mb-3">
+                ใช้เมาส์หรือนิ้ววาดลายเซ็นในกรอบด้านล่าง
+              </p>
+              <div className="border-2 border-dashed border-gray-300 rounded-lg overflow-hidden" style={{ background: 'repeating-conic-gradient(#f0f0f0 0% 25%, white 0% 50%) 50% / 16px 16px' }}>
+                <canvas
+                  ref={drawCanvasRef}
+                  className="w-full cursor-crosshair touch-none"
+                  style={{ height: '200px' }}
+                  onMouseDown={startDraw}
+                  onMouseMove={draw}
+                  onMouseUp={stopDraw}
+                  onMouseLeave={stopDraw}
+                  onTouchStart={startDraw}
+                  onTouchMove={draw}
+                  onTouchEnd={stopDraw}
+                />
+              </div>
+              <div className="flex gap-3 mt-3">
+                <button
+                  onClick={clearDraw}
+                  className="flex-1 py-2 text-sm font-semibold text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200"
+                >
+                  🗑️ ล้างใหม่
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={loading || !hasDrawn}
+                  className="flex-1 py-2 text-sm font-semibold text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50"
+                >
+                  {loading ? 'กำลังบันทึก...' : '💾 บันทึกลายเซ็น'}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
 
         {message && (
           <p className="text-center text-sm mb-4 font-medium">{message}</p>
-        )}
-
-        {processedPreview && (
-          <button
-            onClick={handleSave}
-            disabled={loading}
-            className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700 disabled:opacity-50"
-          >
-            {loading ? 'กำลังบันทึก...' : '💾 บันทึกลายเซ็น'}
-          </button>
         )}
       </div>
     </div>
