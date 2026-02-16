@@ -78,7 +78,10 @@ export default function DocumentsPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('ไม่พบผู้ใช้')
 
-      const fileName = `${user.id}/${Date.now()}_${file.name}`
+      const ext = file.name.split('.').pop() || 'pdf'
+      const safeName = `${Date.now()}.${ext}`
+      const fileName = `${user.id}/${safeName}`
+
       const { error: uploadError } = await supabase.storage.from('official-documents').upload(fileName, file, { upsert: true })
       if (uploadError) throw uploadError
 
