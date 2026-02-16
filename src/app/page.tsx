@@ -54,6 +54,7 @@ export default function LandingPage() {
   const inputCls = "w-full px-3.5 py-2.5 border-[1.5px] border-gray-200 rounded-md text-sm focus:border-navy-3 focus:ring-2 focus:ring-navy-3/10 outline-none transition-all";
 
   const departmentOptions = [
+    "ฝ่ายบริหาร", 
     "สำนักปลัด",
     "กองคลัง",
     "กองช่าง",
