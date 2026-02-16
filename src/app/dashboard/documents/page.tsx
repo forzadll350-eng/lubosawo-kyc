@@ -54,7 +54,7 @@ export default function DocumentsPage() {
   }
 
   async function loadSigners() {
-    const { data } = await supabase.from('user_profiles').select('id, full_name, email').neq('role_id', 5)
+    const { data } = await supabase.from('user_profiles').select('id, full_name, email')
     if (data) setSigners(data)
   }
 
