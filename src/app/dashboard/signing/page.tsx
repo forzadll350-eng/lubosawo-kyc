@@ -27,7 +27,7 @@ export default function SigningPage() {
   const [signModal, setSignModal] = useState<Task | null>(null)
   const [signing, setSigning] = useState(false)
   const [message, setMessage] = useState('')
-  const [filter, setFilter] = useState<'pending' | 'signed' | 'all'>('pending')
+  const [filter, setFilter] = useState<'pending' | 'completed' | 'all'>('pending')
 
   useEffect(() => { loadData() }, [])
 
@@ -125,16 +125,18 @@ export default function SigningPage() {
         .eq('is_active', true)
         .maybeSingle()
 
+      // ✅ เปลี่ยนจาก 'signed' → 'completed' ให้ตรง constraint
       const { error: wfError } = await supabase
         .from('signing_workflows')
         .update({
-          status: 'signed',
+          status: 'completed',
           signature_id: sig?.id || null,
           completed_at: new Date().toISOString(),
         })
         .eq('id', signModal.id)
       if (wfError) throw wfError
 
+      // เช็คว่าทุกคนลงนามครบหรือยัง
       const { data: remaining } = await supabase
         .from('signing_workflows')
         .select('id')
@@ -181,11 +183,12 @@ export default function SigningPage() {
     }
   }
 
+  // ✅ เปลี่ยน filter จาก 'signed' → 'completed'
   const filtered = filter === 'all' ? tasks : tasks.filter(t => t.status === filter)
 
   const statusConfig: Record<string, { label: string; cls: string }> = {
     pending: { label: 'รอลงนาม', cls: 'bg-yellow-100 text-yellow-700' },
-    signed: { label: 'ลงนามแล้ว', cls: 'bg-green-100 text-green-700' },
+    completed: { label: 'ลงนามแล้ว', cls: 'bg-green-100 text-green-700' },
     rejected: { label: 'ปฏิเสธ', cls: 'bg-red-100 text-red-700' },
   }
 
@@ -220,7 +223,7 @@ export default function SigningPage() {
         <div className="flex gap-2 mb-4">
           {[
             { key: 'pending', label: 'รอลงนาม', count: tasks.filter(t => t.status === 'pending').length },
-            { key: 'signed', label: 'ลงนามแล้ว', count: tasks.filter(t => t.status === 'signed').length },
+            { key: 'completed', label: 'ลงนามแล้ว', count: tasks.filter(t => t.status === 'completed').length },
             { key: 'all', label: 'ทั้งหมด', count: tasks.length },
           ].map(f => (
             <button
