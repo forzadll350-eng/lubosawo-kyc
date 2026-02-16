@@ -15,6 +15,14 @@ interface NavItem {
   badge?: number;
 }
 
+const ROLES = [
+  { id: 1, name: "super_admin", label: "Super Admin" },
+  { id: 2, name: "admin", label: "Admin" },
+  { id: 3, name: "officer", label: "เจ้าหน้าที่" },
+  { id: 4, name: "signer", label: "ผู้ลงนาม" },
+  { id: 5, name: "viewer", label: "ผู้ใช้ทั่วไป" },
+];
+
 export default function AdminDashboard() {
   const supabase = createClient();
   const router = useRouter();
@@ -25,6 +33,7 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [reviewModal, setReviewModal] = useState<Submission | null>(null);
   const [rejectReason, setRejectReason] = useState("");
+  const [selectedRoleId, setSelectedRoleId] = useState(5);
 
   useEffect(() => { loadData(); // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -33,7 +42,7 @@ export default function AdminDashboard() {
     const { data: { user: u } } = await supabase.auth.getUser();
     if (!u) { router.push("/"); return; }
     setUser(u);
-    const { data: subs } = await supabase.from("kyc_submissions").select("*, user_profiles(full_name, email, phone)").order("created_at", { ascending: false });
+    const { data: subs } = await supabase.from("kyc_submissions").select("*, user_profiles(full_name, email, phone, role_id)").order("created_at", { ascending: false });
     if (subs) {
       setSubmissions(subs);
       setStats({ pending: subs.filter((s: Submission) => s.status === "pending").length, approved: subs.filter((s: Submission) => s.status === "approved").length, rejected: subs.filter((s: Submission) => s.status === "rejected").length, total: subs.length });
@@ -41,9 +50,10 @@ export default function AdminDashboard() {
     setLoading(false);
   }
 
-  async function handleApprove(id: string) {
+  async function handleApprove(id: string, userId: string) {
     await supabase.from("kyc_submissions").update({ status: "approved", reviewed_at: new Date().toISOString() }).eq("id", id);
-    setReviewModal(null); loadData();
+    await supabase.from("user_profiles").update({ role_id: selectedRoleId }).eq("id", userId);
+    setReviewModal(null); setSelectedRoleId(5); loadData();
   }
 
   async function handleReject(id: string) {
@@ -52,11 +62,18 @@ export default function AdminDashboard() {
     setReviewModal(null); setRejectReason(""); loadData();
   }
 
+  async function handleChangeRole(userId: string, roleId: number) {
+    await supabase.from("user_profiles").update({ role_id: roleId }).eq("id", userId);
+    loadData();
+  }
+
   async function handleLogout() { await supabase.auth.signOut(); router.push("/"); }
 
   const filtered = filter === "all" ? submissions : submissions.filter((s: Submission) => s.status === filter);
   const chipCls: Record<string, string> = { pending: "bg-status-orange-light text-status-orange", approved: "bg-status-green-light text-status-green", rejected: "bg-status-red-light text-status-red" };
   const chipLabel: Record<string, string> = { pending: "รอตรวจสอบ", approved: "อนุมัติ", rejected: "ปฏิเสธ" };
+
+  const getRoleName = (roleId: number) => ROLES.find(r => r.id === roleId)?.label || "ไม่ทราบ";
 
   const navItems: NavItem[] = [
     {icon:"📋",label:"คิวตรวจสอบ",f:"pending",badge:stats.pending},
@@ -99,14 +116,27 @@ export default function AdminDashboard() {
           <div className="flex items-center gap-3 mb-3.5"><h3 className="text-base font-bold text-navy">รายการ KYC</h3></div>
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
             <table className="w-full border-collapse">
-              <thead><tr className="bg-gray-50">{["ผู้สมัคร","สถานะ","วันที่ส่ง","จัดการ"].map((h) => <th key={h} className="px-4 py-3 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200">{h}</th>)}</tr></thead>
+              <thead><tr className="bg-gray-50">{["ผู้สมัคร","สถานะ","Role","วันที่ส่ง","จัดการ"].map((h) => <th key={h} className="px-4 py-3 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200">{h}</th>)}</tr></thead>
               <tbody>
-                {filtered.length===0?<tr><td colSpan={4} className="text-center py-12 text-gray-400 text-sm">ไม่มีรายการ</td></tr>:filtered.map((s: Submission)=>(
+                {filtered.length===0?<tr><td colSpan={5} className="text-center py-12 text-gray-400 text-sm">ไม่มีรายการ</td></tr>:filtered.map((s: Submission)=>(
                   <tr key={s.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3 border-b border-gray-100"><div className="flex items-center gap-2.5"><div className="w-8 h-8 rounded-full bg-gradient-to-br from-navy-2 to-navy-3 flex items-center justify-center text-white font-bold text-xs shrink-0">{(s.user_profiles?.full_name||"U")[0]}</div><div><div className="text-[13px] font-semibold text-navy">{s.user_profiles?.full_name||"-"}</div><small className="text-[11px] text-gray-400">{s.user_profiles?.email||""}</small></div></div></td>
                     <td className="px-4 py-3 border-b border-gray-100"><span className={"inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold "+(chipCls[s.status]||"")}>{chipLabel[s.status]||s.status}</span></td>
+                    <td className="px-4 py-3 border-b border-gray-100">
+                      {s.status === "approved" ? (
+                        <select
+                          value={s.user_profiles?.role_id || 5}
+                          onChange={(e) => handleChangeRole(s.user_id, Number(e.target.value))}
+                          className="text-xs border border-gray-200 rounded-md px-2 py-1.5 outline-none focus:border-navy-3 cursor-pointer"
+                        >
+                          {ROLES.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+                        </select>
+                      ) : (
+                        <span className="text-xs text-gray-400">{getRoleName(s.user_profiles?.role_id || 5)}</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 border-b border-gray-100 text-xs text-gray-500">{new Date(s.created_at).toLocaleDateString("th-TH")}</td>
-                    <td className="px-4 py-3 border-b border-gray-100"><button onClick={()=>setReviewModal(s)} className="px-3 py-1.5 bg-navy text-white rounded-md text-xs font-semibold hover:bg-navy-3 transition-colors border-none cursor-pointer">ตรวจสอบ</button></td>
+                    <td className="px-4 py-3 border-b border-gray-100"><button onClick={()=>{setReviewModal(s); setSelectedRoleId(s.user_profiles?.role_id || 5);}} className="px-3 py-1.5 bg-navy text-white rounded-md text-xs font-semibold hover:bg-navy-3 transition-colors border-none cursor-pointer">ตรวจสอบ</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -154,10 +184,22 @@ export default function AdminDashboard() {
               )}
             </div>
             {reviewModal.status==="pending"&&(
-              <div className="flex gap-2.5 px-7 py-5 border-t border-gray-200 bg-gray-50 rounded-b-2xl items-end">
-                <textarea value={rejectReason} onChange={(e)=>setRejectReason(e.target.value)} placeholder="เหตุผลในการปฏิเสธ (ถ้ามี)" className="flex-1 px-3 py-2.5 border-[1.5px] border-gray-200 rounded-lg text-[13px] resize-none h-[70px] outline-none focus:border-navy-3"/>
-                <button onClick={()=>handleApprove(reviewModal.id)} className="px-7 py-2.5 bg-status-green text-white rounded-lg text-[13px] font-bold cursor-pointer border-none whitespace-nowrap">อนุมัติ</button>
-                <button onClick={()=>handleReject(reviewModal.id)} className="px-6 py-2.5 bg-status-red text-white rounded-lg text-[13px] font-bold cursor-pointer border-none cursor-pointer whitespace-nowrap">ปฏิเสธ</button>
+              <div className="px-7 py-5 border-t border-gray-200 bg-gray-50 rounded-b-2xl">
+                <div className="flex items-center gap-3 mb-4">
+                  <label className="text-[13px] font-bold text-navy whitespace-nowrap">กำหนด Role:</label>
+                  <select
+                    value={selectedRoleId}
+                    onChange={(e) => setSelectedRoleId(Number(e.target.value))}
+                    className="flex-1 px-3 py-2 border-[1.5px] border-gray-200 rounded-lg text-[13px] outline-none focus:border-navy-3 cursor-pointer"
+                  >
+                    {ROLES.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+                  </select>
+                </div>
+                <div className="flex gap-2.5 items-end">
+                  <textarea value={rejectReason} onChange={(e)=>setRejectReason(e.target.value)} placeholder="เหตุผลในการปฏิเสธ (ถ้ามี)" className="flex-1 px-3 py-2.5 border-[1.5px] border-gray-200 rounded-lg text-[13px] resize-none h-[70px] outline-none focus:border-navy-3"/>
+                  <button onClick={()=>handleApprove(reviewModal.id, reviewModal.user_id)} className="px-7 py-2.5 bg-status-green text-white rounded-lg text-[13px] font-bold cursor-pointer border-none whitespace-nowrap">อนุมัติ</button>
+                  <button onClick={()=>handleReject(reviewModal.id)} className="px-6 py-2.5 bg-status-red text-white rounded-lg text-[13px] font-bold cursor-pointer border-none whitespace-nowrap">ปฏิเสธ</button>
+                </div>
               </div>
             )}
           </div>
