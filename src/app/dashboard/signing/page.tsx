@@ -38,7 +38,6 @@ export default function SigningPage() {
   const [message, setMessage] = useState('')
   const [filter, setFilter] = useState<'pending' | 'completed' | 'all'>('pending')
 
-  // Modal ดูลายเซ็นในเอกสาร
   const [docSignatures, setDocSignatures] = useState<DocSignature[]>([])
   const [showSigModal, setShowSigModal] = useState(false)
   const [sigModalTitle, setSigModalTitle] = useState('')
@@ -106,10 +105,29 @@ export default function SigningPage() {
     setLoading(false)
   }
 
+  // ★ แก้ตรงนี้: ลองดึงจาก signed-documents ก่อน ถ้าไม่เจอค่อย official-documents ★
   async function handleViewFile(filePath: string) {
-    const { data } = await supabase.storage.from('official-documents').createSignedUrl(filePath, 300)
-    if (data?.signedUrl) window.open(data.signedUrl, '_blank')
-    else alert('ไม่สามารถเปิดไฟล์ได้')
+    // ลอง signed-documents ก่อน
+    const { data: signedData } = await supabase.storage
+      .from('signed-documents')
+      .createSignedUrl(filePath, 300)
+
+    if (signedData?.signedUrl) {
+      window.open(signedData.signedUrl, '_blank')
+      return
+    }
+
+    // ลอง official-documents
+    const { data: origData } = await supabase.storage
+      .from('official-documents')
+      .createSignedUrl(filePath, 300)
+
+    if (origData?.signedUrl) {
+      window.open(origData.signedUrl, '_blank')
+      return
+    }
+
+    alert('ไม่สามารถเปิดไฟล์ได้')
   }
 
   async function handleViewSignatures(task: Task) {
@@ -221,7 +239,7 @@ export default function SigningPage() {
 
   const actionLabel: Record<string, string> = {
     sign: '✍️ ลงนาม',
-    approve: '✅ อนุมัติ',
+    approve: '👍 อนุมัติ',
     review: '🔍 ตรวจสอบ',
   }
 
@@ -317,7 +335,6 @@ export default function SigningPage() {
         </div>
       </div>
 
-      {/* ====== VIEW SIGNATURES MODAL ====== */}
       {showSigModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={() => setShowSigModal(false)}>
           <div className="bg-white rounded-xl w-full max-w-lg p-6 shadow-lg max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
