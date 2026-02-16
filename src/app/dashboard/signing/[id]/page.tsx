@@ -5,6 +5,10 @@ import { createClient } from '@/lib/supabase/client'
 import { useRouter, useParams } from 'next/navigation'
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
 import * as QRCode from 'qrcode'
+import * as pdfjsLib from 'pdfjs-dist'
+
+// ★ ใช้ worker จาก public folder ★
+pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
 
 export default function SignDocumentPage() {
   const supabase = createClient()
@@ -34,9 +38,6 @@ export default function SignDocumentPage() {
     pdfY: number
   } | null>(null)
 
-  // pdfjs lib ref
-  const pdfjsRef = useRef<any>(null)
-
   useEffect(() => { loadAll() }, [])
 
   async function loadAll() {
@@ -44,7 +45,6 @@ export default function SignDocumentPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push('/'); return }
 
-      // workflow
       const { data: wf } = await supabase
         .from('signing_workflows')
         .select('*')
@@ -53,7 +53,6 @@ export default function SignDocumentPage() {
       if (!wf) { setMessage('ไม่พบงานลงนาม'); setLoading(false); return }
       setWorkflow(wf)
 
-      // document
       const { data: doc } = await supabase
         .from('documents')
         .select('*')
@@ -62,7 +61,6 @@ export default function SignDocumentPage() {
       if (!doc) { setMessage('ไม่พบเอกสาร'); setLoading(false); return }
       setDocData(doc)
 
-      // profile
       const { data: prof } = await supabase
         .from('user_profiles')
         .select('*')
@@ -70,7 +68,6 @@ export default function SignDocumentPage() {
         .single()
       setProfile(prof)
 
-      // signature
       const { data: sig } = await supabase
         .from('user_signatures')
         .select('id, signature_url')
@@ -82,7 +79,6 @@ export default function SignDocumentPage() {
         setSignatureId(sig.id)
       }
 
-      // PDF file
       const { data: fileData } = await supabase.storage
         .from('official-documents')
         .createSignedUrl(doc.file_url, 300)
@@ -99,7 +95,7 @@ export default function SignDocumentPage() {
     }
   }
 
-  // ====== Render PDF — ใช้ dynamic import แบบที่ทำงานกับ Next.js ======
+  // ====== Render PDF ======
   useEffect(() => {
     if (!pdfBytes) return
     renderPdf()
@@ -107,19 +103,10 @@ export default function SignDocumentPage() {
 
   async function renderPdf() {
     try {
-      // ★ วิธีที่ทำงานกับ Next.js App Router ★
-      const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
-
-      // ตั้ง worker
-      pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.mjs`
-
-      pdfjsRef.current = pdfjs
-
-      const pdf = await pdfjs.getDocument({ data: pdfBytes! }).promise
+      const pdf = await pdfjsLib.getDocument({ data: pdfBytes! }).promise
       const numPages = pdf.numPages
       setPageCount(numPages)
 
-      // รอ DOM update
       await new Promise(r => setTimeout(r, 200))
 
       for (let i = 0; i < numPages; i++) {
@@ -152,13 +139,7 @@ export default function SignDocumentPage() {
     const pdfX = clickX / scale
     const pdfY = (canvas.height / scale) - (clickY / scale)
 
-    setSigPosition({
-      page: pageIndex,
-      x: clickX,
-      y: clickY,
-      pdfX,
-      pdfY,
-    })
+    setSigPosition({ page: pageIndex, x: clickX, y: clickY, pdfX, pdfY })
   }
 
   // ====== ยืนยันลงนาม ======
@@ -170,31 +151,23 @@ export default function SignDocumentPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('ไม่พบผู้ใช้')
 
-      // 1. verification code + QR
       const verificationCode = crypto.randomUUID()
       const verifyUrl = `${window.location.origin}/verify/${verificationCode}`
       const qrDataUrl = await QRCode.toDataURL(verifyUrl, { width: 100, margin: 1 })
 
-      // 2. ดึงรูปลายเซ็น
       const sigResp = await fetch(signatureUrl)
       const sigBuf = await sigResp.arrayBuffer()
       const sigUint8 = new Uint8Array(sigBuf)
 
-      // 3. pdf-lib
       const pdfDoc = await PDFDocument.load(pdfBytes)
       const pages = pdfDoc.getPages()
       const targetPage = pages[sigPosition.page]
 
-      // embed ลายเซ็น
       let sigImage
-      if (signatureUrl.toLowerCase().includes('.png')) {
+      try {
         sigImage = await pdfDoc.embedPng(sigUint8)
-      } else {
-        try {
-          sigImage = await pdfDoc.embedPng(sigUint8)
-        } catch {
-          sigImage = await pdfDoc.embedJpg(sigUint8)
-        }
+      } catch {
+        sigImage = await pdfDoc.embedJpg(sigUint8)
       }
 
       const sigWidth = 150
@@ -207,7 +180,6 @@ export default function SignDocumentPage() {
         height: sigHeight,
       })
 
-      // ชื่อ + ตำแหน่ง + วันที่
       const font = await pdfDoc.embedFont(StandardFonts.Helvetica)
       const signDate = new Date().toLocaleDateString('th-TH', {
         year: 'numeric', month: 'long', day: 'numeric'
@@ -220,7 +192,6 @@ export default function SignDocumentPage() {
       targetPage.drawText(profile?.position || '', { x: textX, y: textY - 13, size: 8, font, color: rgb(0.3, 0.3, 0.3) })
       targetPage.drawText(signDate, { x: textX, y: textY - 25, size: 8, font, color: rgb(0.3, 0.3, 0.3) })
 
-      // QR Code
       const qrBase64 = qrDataUrl.split(',')[1]
       const qrBytes = Uint8Array.from(atob(qrBase64), c => c.charCodeAt(0))
       const qrImage = await pdfDoc.embedPng(qrBytes)
@@ -229,8 +200,7 @@ export default function SignDocumentPage() {
       targetPage.drawImage(qrImage, {
         x: sigPosition.pdfX + sigWidth / 2 + 10,
         y: sigPosition.pdfY - qrSize / 2,
-        width: qrSize,
-        height: qrSize,
+        width: qrSize, height: qrSize,
       })
 
       targetPage.drawText('Scan to verify', {
@@ -239,7 +209,6 @@ export default function SignDocumentPage() {
         size: 6, font, color: rgb(0.4, 0.4, 0.4),
       })
 
-      // 4. บันทึก PDF
       const modifiedPdfBytes = await pdfDoc.save()
       const signedFileName = `signed_${Date.now()}.pdf`
 
@@ -248,11 +217,9 @@ export default function SignDocumentPage() {
         .upload(signedFileName, modifiedPdfBytes, { contentType: 'application/pdf' })
       if (uploadError) throw new Error('อัปโหลด PDF ล้มเหลว: ' + uploadError.message)
 
-      // 5. hash
       const hashBuffer = await crypto.subtle.digest('SHA-256', modifiedPdfBytes)
       const docHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('')
 
-      // 6. insert document_signatures
       const { data: docSig, error: docSigError } = await supabase
         .from('document_signatures')
         .insert({
@@ -270,13 +237,11 @@ export default function SignDocumentPage() {
         .single()
       if (docSigError) throw new Error('บันทึกลายเซ็นล้มเหลว: ' + docSigError.message)
 
-      // 7. update workflow
       await supabase
         .from('signing_workflows')
         .update({ status: 'completed', signature_id: docSig.id, completed_at: new Date().toISOString() })
         .eq('id', workflowId)
 
-      // 8. เช็คครบทุกคนไหม
       const { data: remaining } = await supabase
         .from('signing_workflows')
         .select('id')
@@ -290,7 +255,6 @@ export default function SignDocumentPage() {
         .update({ status: newStatus, file_url: signedFileName, updated_at: new Date().toISOString() })
         .eq('id', docData.id)
 
-      // 9. audit
       await supabase.from('audit_logs').insert({
         user_id: user.id,
         action: 'document.sign',
@@ -319,7 +283,6 @@ export default function SignDocumentPage() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      {/* HEADER */}
       <div className="sticky top-0 z-30 bg-white shadow-sm border-b px-4 py-3">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -346,7 +309,6 @@ export default function SignDocumentPage() {
         </div>
       </div>
 
-      {/* INSTRUCTIONS */}
       <div className="max-w-6xl mx-auto px-4 mt-4">
         {!signatureUrl ? (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
@@ -359,7 +321,7 @@ export default function SignDocumentPage() {
           </div>
         ) : (
           <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-4 flex justify-between items-center">
-            <p className="text-green-700 text-sm">✅ เลือกตำแหน่งแล้ว — ลายเซ็น + QR Code จะถูกวางตรงจุดที่เลือก</p>
+            <p className="text-green-700 text-sm">✅ ลายเซ็น + QR Code จะถูกวางตรงจุดที่เลือก</p>
             <button onClick={() => setSigPosition(null)} className="text-xs text-green-600 hover:underline">เลือกใหม่</button>
           </div>
         )}
@@ -371,14 +333,12 @@ export default function SignDocumentPage() {
         )}
       </div>
 
-      {/* ZOOM */}
       <div className="max-w-6xl mx-auto px-4 mb-3 flex gap-2">
         <button onClick={() => setScale(s => Math.max(0.5, s - 0.25))} className="px-3 py-1 bg-white border rounded text-sm hover:bg-gray-50">➖</button>
         <span className="px-3 py-1 bg-white border rounded text-sm">{Math.round(scale * 100)}%</span>
         <button onClick={() => setScale(s => Math.min(3, s + 0.25))} className="px-3 py-1 bg-white border rounded text-sm hover:bg-gray-50">➕</button>
       </div>
 
-      {/* PDF PAGES */}
       <div className="max-w-6xl mx-auto px-4 pb-20">
         {Array.from({ length: pageCount }).map((_, i) => (
           <div key={i} className="relative mb-4 inline-block">
@@ -390,12 +350,8 @@ export default function SignDocumentPage() {
               onClick={(e) => handleCanvasClick(e, i)}
               className="cursor-crosshair block bg-white shadow-lg"
             />
-            {/* Preview ลายเซ็น */}
             {sigPosition && sigPosition.page === i && signatureUrl && (
-              <div
-                className="absolute pointer-events-none"
-                style={{ left: sigPosition.x - 75, top: sigPosition.y - 30 }}
-              >
+              <div className="absolute pointer-events-none" style={{ left: sigPosition.x - 75, top: sigPosition.y - 30 }}>
                 <div className="flex items-start gap-2">
                   <div>
                     <img src={signatureUrl} alt="sig" className="border-2 border-green-400 border-dashed rounded bg-white/80" style={{ width: 150, height: 'auto' }} />
