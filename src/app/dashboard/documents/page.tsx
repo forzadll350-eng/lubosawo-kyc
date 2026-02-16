@@ -8,7 +8,7 @@ import { logAudit } from '@/lib/audit'
 type Category = { id: number; code: string; name: string }
 type Doc = { id: string; title: string; document_number: string; description: string; file_url: string; file_name: string; file_size: number; status: string; created_at: string; category_id: number; document_categories?: { name: string }; user_id: string }
 type Signer = { id: string; full_name: string; email: string }
-type Workflow = { id: string; signer_id: string; step_order: number; required_action: string; status: string; user_profiles?: { full_name: string; email: string } }
+type Workflow = { id: string; signer_id: string; step_order: number; required_action: string; status: string; user_profiles?: { full_name: string; email: string } | null }
 
 export default function DocumentsPage() {
   const supabase = createClient()
@@ -25,7 +25,6 @@ export default function DocumentsPage() {
   const [form, setForm] = useState({ title: '', document_number: '', description: '', category_id: 0 })
   const [file, setFile] = useState<File | null>(null)
 
-  // ส่งลงนาม
   const [sendModal, setSendModal] = useState<Doc | null>(null)
   const [signers, setSigners] = useState<Signer[]>([])
   const [selectedSigners, setSelectedSigners] = useState<{ signer_id: string; action: string }[]>([])
@@ -44,12 +43,21 @@ export default function DocumentsPage() {
       if (cats.length > 0 && form.category_id === 0) setForm(f => ({ ...f, category_id: cats[0].id }))
     }
 
+    const catMap = new Map(cats?.map(c => [c.id, c.name]) || [])
+
     const { data: docs } = await supabase
       .from('documents')
-      .select('*, document_categories(name)')
+      .select('*')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
-    if (docs) setDocuments(docs)
+
+    if (docs) {
+      const enriched = docs.map(d => ({
+        ...d,
+        document_categories: { name: catMap.get(d.category_id) || '-' },
+      }))
+      setDocuments(enriched)
+    }
     setLoading(false)
   }
 
@@ -59,12 +67,28 @@ export default function DocumentsPage() {
   }
 
   async function loadWorkflows(docId: string) {
-    const { data } = await supabase
+    const { data: wfs } = await supabase
       .from('signing_workflows')
-      .select('*, user_profiles:signer_id(full_name, email)')
+      .select('*')
       .eq('document_id', docId)
       .order('step_order')
-    if (data) setWorkflows(data)
+
+    if (wfs && wfs.length > 0) {
+      const signerIds = [...new Set(wfs.map(w => w.signer_id).filter(Boolean))]
+      const { data: profiles } = await supabase
+        .from('user_profiles')
+        .select('id, full_name, email')
+        .in('id', signerIds)
+      const profileMap = new Map(profiles?.map(p => [p.id, p]) || [])
+
+      const enriched = wfs.map(w => ({
+        ...w,
+        user_profiles: profileMap.get(w.signer_id) || null,
+      }))
+      setWorkflows(enriched)
+    } else {
+      setWorkflows([])
+    }
   }
 
   async function handleUpload() {
@@ -161,7 +185,8 @@ export default function DocumentsPage() {
       const { error: wfError } = await supabase.from('signing_workflows').insert(rows)
       if (wfError) throw wfError
 
-      await supabase.from('documents').update({ status: 'pending_sign' }).eq('id', sendModal.id)
+      const { error: updateError } = await supabase.from('documents').update({ status: 'pending_sign', updated_at: new Date().toISOString() }).eq('id', sendModal.id)
+      if (updateError) throw updateError
 
       await logAudit(supabase, 'document.send_sign', 'document', sendModal.id, {
         title: sendModal.title,
@@ -302,7 +327,6 @@ export default function DocumentsPage() {
         </div>
       </div>
 
-      {/* SEND FOR SIGNING MODAL */}
       {sendModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={() => setSendModal(null)}>
           <div className="bg-white rounded-xl w-full max-w-lg p-6 shadow-lg" onClick={e => e.stopPropagation()}>
@@ -336,7 +360,6 @@ export default function DocumentsPage() {
         </div>
       )}
 
-      {/* VIEW WORKFLOW MODAL */}
       {viewWorkflowDoc && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={() => setViewWorkflowDoc(null)}>
           <div className="bg-white rounded-xl w-full max-w-lg p-6 shadow-lg" onClick={e => e.stopPropagation()}>
