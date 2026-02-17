@@ -3,10 +3,12 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
+import { usePinLock } from "@/components/pin/PinProvider";
 
 export default function UserDashboard() {
   const supabase = createClient();
   const router = useRouter();
+  const { resetPin } = usePinLock();
   const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
   const [kycStatus, setKycStatus] = useState("not_submitted");
@@ -37,7 +39,6 @@ export default function UserDashboard() {
       const { data: sig } = await supabase.from("user_signatures").select("signature_url").eq("user_id", u.id).eq("is_active", true).maybeSingle();
       if (sig?.signature_url) setSignatureUrl(sig.signature_url);
 
-      // ★ ดึงสถิติ ★
       const { count: dCount } = await supabase.from("documents").select("id", { count: "exact", head: true }).eq("user_id", u.id);
       setDocCount(dCount || 0);
 
@@ -55,6 +56,27 @@ export default function UserDashboard() {
   async function handleLogout() {
     await supabase.auth.signOut();
     router.push("/");
+  }
+
+  async function handleChangePin() {
+    const password = prompt('กรุณาใส่รหัสผ่านเพื่อยืนยันตัวตน:');
+    if (!password) return;
+
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: user?.email || '',
+        password: password,
+      });
+
+      if (error) {
+        alert('❌ รหัสผ่านไม่ถูกต้อง');
+        return;
+      }
+
+      resetPin();
+    } catch {
+      alert('❌ เกิดข้อผิดพลาด');
+    }
   }
 
   if (loading) return (
@@ -102,7 +124,6 @@ export default function UserDashboard() {
     { icon: "📜", label: "บันทึกกิจกรรม", desc: "ประวัติการดำเนินการ", path: "/dashboard/audit-log", color: "from-purple-500 to-purple-600" },
   ];
 
-  // ★ สถิติ cards ★
   const stats = [
     { icon: "📄", label: "เอกสารของฉัน", value: docCount, color: "text-blue-600", bg: "bg-blue-50" },
     { icon: "⏳", label: "รอลงนาม", value: pendingSignCount, color: "text-orange-600", bg: "bg-orange-50" },
@@ -129,6 +150,7 @@ export default function UserDashboard() {
               <span className={"px-1.5 py-0.5 rounded-full text-[10px] font-bold " + userRole.color}>{userRole.label}</span>
             </div>
           </div>
+          <button onClick={handleChangePin} className="bg-white/8 border border-white/15 text-white px-3.5 py-1.5 rounded-md text-xs cursor-pointer hover:bg-white/14 transition-colors">🔐 เปลี่ยน PIN</button>
           <button onClick={handleLogout} className="bg-white/8 border border-white/15 text-white px-3.5 py-1.5 rounded-md text-xs cursor-pointer hover:bg-white/14 transition-colors">ออกจากระบบ</button>
         </div>
       </div>
@@ -214,7 +236,6 @@ export default function UserDashboard() {
 
         {/* INFO CARDS GRID */}
         <div className="grid grid-cols-3 gap-5">
-          {/* ข้อมูลส่วนตัว */}
           <div className="bg-white rounded-[14px] p-6 border border-gray-200 shadow-sm">
             <h4 className="text-sm font-bold text-navy mb-4 flex items-center gap-2">👤 ข้อมูลส่วนตัว</h4>
             <div className="space-y-0">
@@ -238,7 +259,6 @@ export default function UserDashboard() {
             </div>
           </div>
 
-          {/* ข้อมูล KYC */}
           <div className="bg-white rounded-[14px] p-6 border border-gray-200 shadow-sm">
             <h4 className="text-sm font-bold text-navy mb-4 flex items-center gap-2">🔐 ข้อมูล KYC</h4>
             <div className="space-y-0">
@@ -260,7 +280,6 @@ export default function UserDashboard() {
             </div>
           </div>
 
-          {/* ลายเซ็นดิจิทัล */}
           <div className="bg-white rounded-[14px] p-6 border border-gray-200 shadow-sm flex flex-col">
             <h4 className="text-sm font-bold text-navy mb-4 flex items-center gap-2">✍️ ลายเซ็นดิจิทัล</h4>
             {signatureUrl ? (
