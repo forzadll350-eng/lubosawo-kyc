@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useParams } from 'next/navigation'
 
@@ -31,6 +31,13 @@ type WorkflowStep = {
   signature?: SignerInfo | null
 }
 
+// ★ คำนวณ SHA-256 จากไฟล์ (ฝั่ง client)
+async function computeFileHash(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer()
+  const hash = await crypto.subtle.digest('SHA-256', buffer)
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
 export default function VerifyPage() {
   const supabase = createClient()
   const params = useParams()
@@ -42,11 +49,22 @@ export default function VerifyPage() {
   const [signers, setSigners] = useState<SignerInfo[]>([])
   const [error, setError] = useState('')
 
+  // ★ Hash verification state
+  const [hashChecking, setHashChecking] = useState(false)
+  const [hashResult, setHashResult] = useState<null | {
+    match: boolean
+    uploadedHash: string
+    matchedStep?: number
+    matchedName?: string
+    matchType?: string
+  }>(null)
+  const [dragOver, setDragOver] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
   useEffect(() => { verify() }, [])
 
   async function verify() {
     try {
-      // 1. หาลายเซ็นที่ตรงกับ QR code
       const { data: sig, error: sigErr } = await supabase
         .from('document_signatures')
         .select('*')
@@ -58,7 +76,6 @@ export default function VerifyPage() {
         return
       }
 
-      // 2. ดึงข้อมูลเอกสาร
       const { data: docData } = await supabase
         .from('documents')
         .select('*')
@@ -66,21 +83,18 @@ export default function VerifyPage() {
         .single()
       setDoc(docData)
 
-      // 3. ★ ดึง workflow ทั้งหมด (รวมคนที่ยังไม่ลงนาม)
       const { data: allWf } = await supabase
         .from('signing_workflows')
         .select('*')
         .eq('document_id', sig.document_id)
         .order('step_order', { ascending: true })
 
-      // 4. ★ ดึง document_signatures ทุกคน
       const { data: allSigs } = await supabase
         .from('document_signatures')
         .select('*')
         .eq('document_id', sig.document_id)
         .order('signed_at', { ascending: true })
 
-      // 5. ดึง profiles ทั้งหมด
       const allUserIds = [
         ...new Set([
           ...(allWf?.map(w => w.signer_id) || []),
@@ -94,7 +108,6 @@ export default function VerifyPage() {
         .in('id', allUserIds)
       const profileMap = new Map(profiles?.map(p => [p.id, p]) || [])
 
-      // 6. ดึง KYC ทั้งหมด
       const { data: kycList } = await supabase
         .from('kyc_submissions')
         .select('user_id, status, verification_method, verified_at')
@@ -106,13 +119,11 @@ export default function VerifyPage() {
         if (!kycMap.has(k.user_id)) kycMap.set(k.user_id, k)
       })
 
-      // 7. ★ Map signatures by signer_id
       const sigBySigner = new Map<string, any>()
       allSigs?.forEach(s => {
         sigBySigner.set(s.signer_id, s)
       })
 
-      // 8. ★ สร้าง enriched steps (workflow + signature ถ้ามี)
       if (allWf && allWf.length > 0) {
         const enrichedSteps: WorkflowStep[] = allWf.map(w => {
           const profile = profileMap.get(w.signer_id)
@@ -147,7 +158,6 @@ export default function VerifyPage() {
         setSteps(enrichedSteps)
       }
 
-      // 9. เก็บ signers เดิมด้วย (สำหรับนับ)
       if (allSigs) {
         const enrichedSigs: SignerInfo[] = allSigs.map(s => {
           const profile = profileMap.get(s.signer_id)
@@ -188,6 +198,73 @@ export default function VerifyPage() {
     if (orig?.signedUrl) window.open(orig.signedUrl, '_blank')
   }
 
+  // ★ ตรวจสอบ Hash
+  async function handleHashCheck(file: File) {
+    setHashChecking(true)
+    setHashResult(null)
+
+    // delay เล็กน้อยให้เห็น animation
+    await new Promise(r => setTimeout(r, 1500))
+
+    try {
+      const uploadedHash = await computeFileHash(file)
+
+      // เก็บ hash ทั้งหมดจาก signatures + file_hash ของเอกสารต้นฉบับ
+      const allHashes: { hash: string; step: number; name: string; type: string }[] = []
+
+      // hash ต้นฉบับ (ถ้ามี)
+      if (doc?.file_hash) {
+        allHashes.push({ hash: doc.file_hash, step: 0, name: 'ต้นฉบับ', type: 'ไฟล์ต้นฉบับ (ก่อนลงนาม)' })
+      }
+
+      // hash จากแต่ละ step
+      steps.forEach(s => {
+        if (s.signature?.document_hash) {
+          allHashes.push({
+            hash: s.signature.document_hash,
+            step: s.step_order,
+            name: s.signer_name,
+            type: `หลังลงนามลำดับที่ ${s.step_order} (${s.signer_name})`,
+          })
+        }
+      })
+
+      // เทียบ
+      const matched = allHashes.find(h => h.hash === uploadedHash)
+
+      if (matched) {
+        setHashResult({
+          match: true,
+          uploadedHash,
+          matchedStep: matched.step,
+          matchedName: matched.name,
+          matchType: matched.type,
+        })
+      } else {
+        setHashResult({
+          match: false,
+          uploadedHash,
+        })
+      }
+    } catch {
+      setHashResult({ match: false, uploadedHash: 'เกิดข้อผิดพลาด' })
+    } finally {
+      setHashChecking(false)
+    }
+  }
+
+  function handleFileDrop(e: React.DragEvent) {
+    e.preventDefault()
+    setDragOver(false)
+    const file = e.dataTransfer.files[0]
+    if (file) handleHashCheck(file)
+  }
+
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file) handleHashCheck(file)
+  }
+
   const completedCount = steps.filter(s => s.status === 'completed').length
   const rejectedCount = steps.filter(s => s.status === 'rejected').length
   const totalCount = steps.length
@@ -199,8 +276,6 @@ export default function VerifyPage() {
     : isFullySigned
     ? '✅ ลงนามครบทุกลำดับแล้ว'
     : `⏳ อยู่ระหว่างลงนาม (${completedCount}/${totalCount})`
-
-  const statusColor = isRejected ? 'red' : isFullySigned ? 'green' : 'yellow'
 
   if (loading) return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -264,7 +339,6 @@ export default function VerifyPage() {
             </div>
           </div>
 
-          {/* ★ Progress Bar */}
           {totalCount > 0 && (
             <div className="mt-4">
               <div className="flex justify-between text-xs text-gray-400 mb-1">
@@ -290,7 +364,7 @@ export default function VerifyPage() {
           </button>
         </div>
 
-        {/* ★ ลำดับการลงนาม (Timeline จาก workflow) */}
+        {/* ★ ลำดับการลงนาม */}
         <div className="bg-white rounded-xl shadow p-5 mb-4">
           <h2 className="font-bold text-sm text-gray-800 mb-3">
             📋 ลำดับการลงนาม ({completedCount}/{totalCount})
@@ -316,7 +390,6 @@ export default function VerifyPage() {
                      isCurrent ? "bg-blue-50 border border-blue-200" :
                      "bg-gray-50 border border-gray-200")
                   }>
-                    {/* Header */}
                     <div className="flex items-start justify-between mb-2">
                       <div className="flex items-center gap-2">
                         <div className={"w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold border-2 " +
@@ -344,7 +417,6 @@ export default function VerifyPage() {
                       </div>
                     </div>
 
-                    {/* ถ้าลงนามแล้ว — แสดงรายละเอียด */}
                     {step.signature && (
                       <div className="mt-2 space-y-2">
                         <p className="text-xs text-gray-400">
@@ -354,7 +426,6 @@ export default function VerifyPage() {
                           })}
                         </p>
 
-                        {/* Hash */}
                         {step.signature.document_hash && (
                           <div className="bg-white rounded p-2">
                             <p className="text-[10px] text-gray-400 mb-0.5">Document Hash (SHA-256)</p>
@@ -362,7 +433,6 @@ export default function VerifyPage() {
                           </div>
                         )}
 
-                        {/* KYC */}
                         <div className="bg-white rounded p-2 flex items-center justify-between">
                           <span className="text-xs text-gray-500">🔐 KYC IAL 2</span>
                           <span className={"px-2 py-0.5 rounded-full text-xs font-bold " +
@@ -374,7 +444,6 @@ export default function VerifyPage() {
                           </span>
                         </div>
 
-                        {/* เหตุผลปฏิเสธ */}
                         {step.signature.rejection_reason && (
                           <p className="text-red-600 text-xs bg-red-100 p-2 rounded">
                             เหตุผล: {step.signature.rejection_reason}
@@ -383,7 +452,6 @@ export default function VerifyPage() {
                       </div>
                     )}
 
-                    {/* ถ้ายังไม่ลงนาม */}
                     {!step.signature && isPending && (
                       <p className="text-xs text-gray-400 mt-1">
                         {isCurrent ? '⏳ รอผู้ลงนามดำเนินการ...' : '🔒 รอลำดับก่อนหน้าเสร็จก่อน'}
@@ -391,7 +459,6 @@ export default function VerifyPage() {
                     )}
                   </div>
 
-                  {/* เส้นเชื่อม */}
                   {!isLast && (
                     <div className="flex justify-center py-1">
                       <div className={"w-0.5 h-4 " + (isDone ? "bg-green-400" : "bg-gray-200")} />
@@ -400,6 +467,114 @@ export default function VerifyPage() {
                 </div>
               )
             })}
+          </div>
+        </div>
+
+        {/* ★★★ ตรวจสอบความถูกต้อง (Hash Verification) ★★★ */}
+        <div className="bg-white rounded-xl shadow p-5 mb-4">
+          <h2 className="font-bold text-sm text-gray-800 mb-2">🔍 ตรวจสอบความถูกต้องของเอกสาร</h2>
+          <p className="text-xs text-gray-400 mb-4">
+            อัปโหลดไฟล์เอกสารที่คุณมี เพื่อตรวจสอบว่าตรงกับต้นฉบับในระบบหรือไม่
+          </p>
+
+          {/* กำลังตรวจสอบ */}
+          {hashChecking && (
+            <div className="text-center py-8">
+              <div className="relative inline-flex items-center justify-center w-20 h-20 mb-4">
+                <span className="absolute w-20 h-20 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
+                <span className="text-2xl">📄</span>
+              </div>
+              <p className="text-sm font-semibold text-blue-700">กำลังตรวจสอบความถูกต้อง...</p>
+              <p className="text-xs text-gray-400 mt-1">คำนวณ SHA-256 Hash และเปรียบเทียบกับระบบ</p>
+            </div>
+          )}
+
+          {/* ผลลัพธ์ */}
+          {hashResult && !hashChecking && (
+            <div className="mb-4">
+              {hashResult.match ? (
+                <div className="bg-green-50 border-2 border-green-300 rounded-xl p-5 text-center">
+                  <div className="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-3">
+                    <span className="text-3xl">✅</span>
+                  </div>
+                  <h3 className="text-lg font-bold text-green-700 mb-1">เอกสารถูกต้อง!</h3>
+                  <p className="text-sm text-green-600 mb-3">ไฟล์ที่อัปโหลดตรงกับเอกสารในระบบ ไม่มีการแก้ไข</p>
+                  <div className="bg-white rounded-lg p-3 text-left">
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="text-gray-500">ตรงกับ</span>
+                      <span className="font-semibold text-green-700">{hashResult.matchType}</span>
+                    </div>
+                    <div className="mt-2">
+                      <p className="text-[10px] text-gray-400 mb-0.5">Hash ที่คำนวณได้</p>
+                      <p className="font-mono text-[10px] text-green-600 break-all">{hashResult.uploadedHash}</p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-red-50 border-2 border-red-300 rounded-xl p-5 text-center">
+                  <div className="inline-flex items-center justify-center w-16 h-16 bg-red-100 rounded-full mb-3">
+                    <span className="text-3xl">❌</span>
+                  </div>
+                  <h3 className="text-lg font-bold text-red-700 mb-1">เอกสารไม่ตรง!</h3>
+                  <p className="text-sm text-red-600 mb-3">ไฟล์ที่อัปโหลดไม่ตรงกับเอกสารในระบบ อาจถูกแก้ไขหรือเป็นคนละไฟล์</p>
+                  <div className="bg-white rounded-lg p-3 text-left">
+                    <div className="mt-1">
+                      <p className="text-[10px] text-gray-400 mb-0.5">Hash ที่คำนวณจากไฟล์ที่อัปโหลด</p>
+                      <p className="font-mono text-[10px] text-red-600 break-all">{hashResult.uploadedHash}</p>
+                    </div>
+                    <div className="mt-2">
+                      <p className="text-[10px] text-gray-400 mb-0.5">Hash ที่บันทึกไว้ในระบบ (ล่าสุด)</p>
+                      <p className="font-mono text-[10px] text-gray-500 break-all">
+                        {steps.filter(s => s.signature?.document_hash).pop()?.signature?.document_hash || doc?.file_hash || '-'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ปุ่มตรวจสอบอีกครั้ง */}
+              <button
+                onClick={() => { setHashResult(null); if (fileInputRef.current) fileInputRef.current.value = '' }}
+                className="mt-3 w-full py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-semibold hover:bg-gray-200"
+              >
+                🔄 ตรวจสอบไฟล์อื่น
+              </button>
+            </div>
+          )}
+
+          {/* Dropzone — แสดงเมื่อยังไม่ได้ตรวจสอบ */}
+          {!hashChecking && !hashResult && (
+            <div
+              onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleFileDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
+                dragOver
+                  ? 'border-blue-500 bg-blue-50'
+                  : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'
+              }`}
+            >
+              <div className="text-4xl mb-2">{dragOver ? '📥' : '📄'}</div>
+              <p className="text-sm font-semibold text-gray-700">
+                {dragOver ? 'ปล่อยไฟล์ตรงนี้' : 'ลากไฟล์มาวาง หรือกดเพื่อเลือก'}
+              </p>
+              <p className="text-xs text-gray-400 mt-1">รองรับ PDF, DOC, DOCX, JPG, PNG</p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.doc,.docx,.jpg,.png"
+                className="hidden"
+                onChange={handleFileSelect}
+              />
+            </div>
+          )}
+
+          <div className="mt-3 bg-gray-50 rounded-lg p-3">
+            <p className="text-[10px] text-gray-500">
+              <strong>🔒 ปลอดภัย:</strong> ไฟล์จะถูกประมวลผลบนเครื่องของคุณเท่านั้น (Client-side) 
+              ไม่มีการอัปโหลดไฟล์ไปยังเซิร์ฟเวอร์ ระบบจะคำนวณ SHA-256 Hash แล้วเปรียบเทียบกับค่าที่บันทึกไว้ในระบบ
+            </p>
           </div>
         </div>
 
