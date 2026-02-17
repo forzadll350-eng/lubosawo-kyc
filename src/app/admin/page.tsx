@@ -92,7 +92,22 @@ export default function AdminDashboard() {
           <div><h2 className="text-white text-[13px] font-bold leading-tight">อบต.ลุโบะสาวอ</h2><p className="text-gold text-[10px] opacity-80">ระบบจัดการ KYC</p></div>
         </div>
         <nav className="flex-1 p-3">
-          <div className="text-[10px] font-bold text-white/30 tracking-widest uppercase px-2 py-1.5">เมนูหลัก</div>
+          {/* ★ เมนูแอดมิน */}
+          <div className="text-[10px] font-bold text-white/30 tracking-widest uppercase px-2 py-1.5">เมนูแอดมิน</div>
+
+          <button onClick={()=>router.push('/admin/users')} className="flex items-center gap-2.5 w-full text-left px-3 py-2.5 rounded-lg text-[13px] font-medium mb-0.5 transition-all border-none cursor-pointer text-white/65 hover:bg-white/7 hover:text-white bg-transparent">
+            <span className="text-base w-5 text-center">👥</span>จัดการผู้ใช้
+          </button>
+
+          {/* ★ ลิงก์ลัด */}
+          <div className="text-[10px] font-bold text-white/30 tracking-widest uppercase px-2 py-1.5 mt-3">ลิงก์ลัด</div>
+
+          <button onClick={()=>router.push('/dashboard')} className="flex items-center gap-2.5 w-full text-left px-3 py-2.5 rounded-lg text-[13px] font-medium mb-3 transition-all border-none cursor-pointer text-white/65 hover:bg-white/7 hover:text-white bg-transparent">
+            <span className="text-base w-5 text-center">📊</span>ไป Dashboard
+          </button>
+
+          {/* ★ ตรวจสอบ KYC */}
+          <div className="text-[10px] font-bold text-white/30 tracking-widest uppercase px-2 py-1.5">ตรวจสอบ KYC</div>
           {navItems.map((n) => (
             <button key={n.f} onClick={()=>setFilter(n.f)} className={"flex items-center gap-2.5 w-full text-left px-3 py-2.5 rounded-lg text-[13px] font-medium mb-0.5 transition-all border-none cursor-pointer "+(filter===n.f?"bg-gold/18 text-gold-2 font-bold":"text-white/65 hover:bg-white/7 hover:text-white bg-transparent")}>
               <span className="text-base w-5 text-center">{n.icon}</span>{n.label}
