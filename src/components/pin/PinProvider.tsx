@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react'
 import PinSetup from './PinSetup'
 import PinLock from './PinLock'
 import { createClient } from '@/lib/supabase/client'
@@ -20,6 +20,7 @@ const MAX_ATTEMPTS = 5
 const STORAGE_KEY = 'pin_hash'
 const LOCK_KEY = 'pin_locked'
 const ATTEMPTS_KEY = 'pin_attempts'
+const UNLOCK_TS_KEY = 'pin_unlock_ts' // ★ เก็บเวลาที่ปลดล็อก
 
 async function hashPin(pin: string): Promise<string> {
   const encoder = new TextEncoder()
@@ -30,9 +31,10 @@ async function hashPin(pin: string): Promise<string> {
 
 export default function PinProvider({ children, hasSession }: { children: ReactNode; hasSession: boolean }) {
   const [state, setState] = useState<PinState>('loading')
-  const [idleTimer, setIdleTimer] = useState<NodeJS.Timeout | null>(null)
+  const idleTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const hiddenAtRef = useRef<number | null>(null)
 
-  // เช็คสถานะตอนโหลด
+  // ★ เช็คสถานะตอนโหลด
   useEffect(() => {
     if (!hasSession) {
       setState('no-session')
@@ -42,24 +44,39 @@ export default function PinProvider({ children, hasSession }: { children: ReactN
     const pinHash = localStorage.getItem(STORAGE_KEY)
     if (!pinHash) {
       setState('setup')
-    } else {
-      // เปิดใหม่ / kill app / ปิดเบราว์เซอร์ = ล็อกเสมอ
-      localStorage.setItem(LOCK_KEY, 'true')
-      setState('locked')
+      return
     }
+
+    // ★ เช็คว่าเคยปลดล็อกไว้ และยังไม่เกิน idle timeout
+    const unlockTs = localStorage.getItem(UNLOCK_TS_KEY)
+    const lockFlag = localStorage.getItem(LOCK_KEY)
+
+    if (lockFlag === 'false' && unlockTs) {
+      const elapsed = Date.now() - parseInt(unlockTs)
+      if (elapsed < IDLE_TIMEOUT) {
+        // ยังอยู่ใน session → ไม่ต้องล็อก
+        setState('unlocked')
+        return
+      }
+    }
+
+    // เปิดใหม่ / หมดเวลา = ล็อก
+    localStorage.setItem(LOCK_KEY, 'true')
+    setState('locked')
   }, [hasSession])
 
-  // จับ idle timeout
+  // ★ จับ idle timeout
   const resetIdleTimer = useCallback(() => {
-    if (state !== 'unlocked') return
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current)
 
-    if (idleTimer) clearTimeout(idleTimer)
-    const timer = setTimeout(() => {
+    // อัพเดทเวลาล่าสุดที่มี activity
+    localStorage.setItem(UNLOCK_TS_KEY, Date.now().toString())
+
+    idleTimerRef.current = setTimeout(() => {
       localStorage.setItem(LOCK_KEY, 'true')
       setState('locked')
     }, IDLE_TIMEOUT)
-    setIdleTimer(timer)
-  }, [state, idleTimer])
+  }, [])
 
   useEffect(() => {
     if (state !== 'unlocked') return
@@ -72,22 +89,34 @@ export default function PinProvider({ children, hasSession }: { children: ReactN
 
     return () => {
       events.forEach(e => window.removeEventListener(e, handler))
-      if (idleTimer) clearTimeout(idleTimer)
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current)
     }
   }, [state, resetIdleTimer])
 
-  // ปิดจอ/สลับแท็บ/ปิดเบราว์เซอร์ = ล็อกทันที
+  // ★ สลับแท็บ / ปิดจอ — แต่ไม่ล็อกทันที ใช้ delay เช็ค
   useEffect(() => {
     if (state !== 'unlocked') return
 
     const handleVisibility = () => {
       if (document.visibilityState === 'hidden') {
-        localStorage.setItem(LOCK_KEY, 'true')
-        setState('locked')
+        // ★ จำเวลาที่ซ่อน
+        hiddenAtRef.current = Date.now()
+      } else if (document.visibilityState === 'visible') {
+        // ★ กลับมา — เช็คว่าซ่อนไปนานไหม
+        if (hiddenAtRef.current) {
+          const hiddenDuration = Date.now() - hiddenAtRef.current
+          // ถ้าซ่อนเกิน 30 วินาที = ล็อก (สลับแท็บจริง / ปิดจอ)
+          if (hiddenDuration > 30 * 1000) {
+            localStorage.setItem(LOCK_KEY, 'true')
+            setState('locked')
+          }
+        }
+        hiddenAtRef.current = null
       }
     }
 
     const handleBeforeUnload = () => {
+      // ★ ปิดเบราว์เซอร์จริง = ล็อก
       localStorage.setItem(LOCK_KEY, 'true')
     }
 
@@ -99,16 +128,17 @@ export default function PinProvider({ children, hasSession }: { children: ReactN
     }
   }, [state])
 
-  // ตั้ง PIN ครั้งแรก
+  // ★ ตั้ง PIN ครั้งแรก
   async function handleSetupPin(pin: string) {
     const hash = await hashPin(pin)
     localStorage.setItem(STORAGE_KEY, hash)
     localStorage.setItem(LOCK_KEY, 'false')
     localStorage.setItem(ATTEMPTS_KEY, '0')
+    localStorage.setItem(UNLOCK_TS_KEY, Date.now().toString())
     setState('unlocked')
   }
 
-  // ปลดล็อก
+  // ★ ปลดล็อก
   async function handleUnlock(pin: string): Promise<boolean> {
     const storedHash = localStorage.getItem(STORAGE_KEY)
     const inputHash = await hashPin(pin)
@@ -116,6 +146,7 @@ export default function PinProvider({ children, hasSession }: { children: ReactN
     if (inputHash === storedHash) {
       localStorage.setItem(LOCK_KEY, 'false')
       localStorage.setItem(ATTEMPTS_KEY, '0')
+      localStorage.setItem(UNLOCK_TS_KEY, Date.now().toString())
       setState('unlocked')
       return true
     }
@@ -127,6 +158,7 @@ export default function PinProvider({ children, hasSession }: { children: ReactN
       localStorage.removeItem(STORAGE_KEY)
       localStorage.removeItem(LOCK_KEY)
       localStorage.removeItem(ATTEMPTS_KEY)
+      localStorage.removeItem(UNLOCK_TS_KEY)
       const supabase = createClient()
       await supabase.auth.signOut()
       window.location.href = '/'
@@ -146,6 +178,7 @@ export default function PinProvider({ children, hasSession }: { children: ReactN
     localStorage.removeItem(STORAGE_KEY)
     localStorage.removeItem(LOCK_KEY)
     localStorage.removeItem(ATTEMPTS_KEY)
+    localStorage.removeItem(UNLOCK_TS_KEY)
     setState('setup')
   }
 
