@@ -1,6 +1,7 @@
-﻿import type { Metadata } from "next";
+import type { Metadata } from "next";
 import { IBM_Plex_Sans_Thai } from "next/font/google";
 import "./globals.css";
+import PinWrapper from "@/components/pin/PinWrapper";
 
 const ibmThai = IBM_Plex_Sans_Thai({
   subsets: ["thai", "latin"],
@@ -24,7 +25,12 @@ export default function RootLayout({
         <meta name="mobile-web-app-capable" content="yes" />
         <link rel="apple-touch-icon" href="/icon-192.png" />
       </head>
-      <body className={`${ibmThai.variable} font-sans`}>{children}<script dangerouslySetInnerHTML={{__html:`if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js")}`}}/></body>
+      <body className={`${ibmThai.variable} font-sans`}>
+        <PinWrapper>
+          {children}
+        </PinWrapper>
+        <script dangerouslySetInnerHTML={{__html:`if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js")}`}}/>
+      </body>
     </html>
   );
 }
