@@ -9,12 +9,13 @@ type PinState = 'loading' | 'no-session' | 'setup' | 'locked' | 'unlocked'
 
 type PinContextType = {
   lockNow: () => void
+  resetPin: () => void
 }
 
-const PinContext = createContext<PinContextType>({ lockNow: () => {} })
+const PinContext = createContext<PinContextType>({ lockNow: () => {}, resetPin: () => {} })
 export const usePinLock = () => useContext(PinContext)
 
-const IDLE_TIMEOUT = 5 * 60 * 1000 // 5 นาที
+const IDLE_TIMEOUT = 2 * 60 * 1000 // 2 นาที
 const MAX_ATTEMPTS = 5
 const STORAGE_KEY = 'pin_hash'
 const LOCK_KEY = 'pin_locked'
@@ -42,14 +43,9 @@ export default function PinProvider({ children, hasSession }: { children: ReactN
     if (!pinHash) {
       setState('setup')
     } else {
-      // เข้า app ใหม่ = ล็อกเสมอ
-      const wasLocked = localStorage.getItem(LOCK_KEY)
-      if (wasLocked === 'false') {
-        setState('unlocked')
-      } else {
-        localStorage.setItem(LOCK_KEY, 'true')
-        setState('locked')
-      }
+      // เปิดใหม่ / kill app / ปิดเบราว์เซอร์ = ล็อกเสมอ
+      localStorage.setItem(LOCK_KEY, 'true')
+      setState('locked')
     }
   }, [hasSession])
 
@@ -80,29 +76,27 @@ export default function PinProvider({ children, hasSession }: { children: ReactN
     }
   }, [state, resetIdleTimer])
 
-  // เมื่อปิดแท็บ/เปลี่ยนแท็บ = ล็อก
+  // ปิดจอ/สลับแท็บ/ปิดเบราว์เซอร์ = ล็อกทันที
   useEffect(() => {
     if (state !== 'unlocked') return
 
     const handleVisibility = () => {
       if (document.visibilityState === 'hidden') {
-        // ไม่ล็อกทันที แต่บันทึกเวลา
-        localStorage.setItem('pin_hidden_at', Date.now().toString())
-      } else {
-        const hiddenAt = localStorage.getItem('pin_hidden_at')
-        if (hiddenAt) {
-          const diff = Date.now() - parseInt(hiddenAt)
-          if (diff > IDLE_TIMEOUT) {
-            localStorage.setItem(LOCK_KEY, 'true')
-            setState('locked')
-          }
-          localStorage.removeItem('pin_hidden_at')
-        }
+        localStorage.setItem(LOCK_KEY, 'true')
+        setState('locked')
       }
     }
 
+    const handleBeforeUnload = () => {
+      localStorage.setItem(LOCK_KEY, 'true')
+    }
+
     document.addEventListener('visibilitychange', handleVisibility)
-    return () => document.removeEventListener('visibilitychange', handleVisibility)
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility)
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
   }, [state])
 
   // ตั้ง PIN ครั้งแรก
@@ -126,19 +120,16 @@ export default function PinProvider({ children, hasSession }: { children: ReactN
       return true
     }
 
-    // ผิด — นับ attempt
     const attempts = parseInt(localStorage.getItem(ATTEMPTS_KEY) || '0') + 1
     localStorage.setItem(ATTEMPTS_KEY, attempts.toString())
 
     if (attempts >= MAX_ATTEMPTS) {
-      // ล้างทุกอย่าง → บังคับ logout
       localStorage.removeItem(STORAGE_KEY)
       localStorage.removeItem(LOCK_KEY)
       localStorage.removeItem(ATTEMPTS_KEY)
-            const supabase = createClient()
+      const supabase = createClient()
       await supabase.auth.signOut()
       window.location.href = '/'
-
     }
 
     return false
@@ -150,7 +141,14 @@ export default function PinProvider({ children, hasSession }: { children: ReactN
     setState('locked')
   }
 
-  // ไม่มี session = ไม่ต้องล็อก
+  // เปลี่ยน PIN
+  function resetPin() {
+    localStorage.removeItem(STORAGE_KEY)
+    localStorage.removeItem(LOCK_KEY)
+    localStorage.removeItem(ATTEMPTS_KEY)
+    setState('setup')
+  }
+
   if (state === 'loading') return (
     <div className="min-h-screen bg-gray-100 flex items-center justify-center">
       <span className="inline-block w-8 h-8 border-3 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
@@ -167,7 +165,7 @@ export default function PinProvider({ children, hasSession }: { children: ReactN
   }
 
   return (
-    <PinContext.Provider value={{ lockNow }}>
+    <PinContext.Provider value={{ lockNow, resetPin }}>
       {children}
     </PinContext.Provider>
   )
