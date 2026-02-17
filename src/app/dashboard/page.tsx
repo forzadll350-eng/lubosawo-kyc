@@ -5,6 +5,14 @@ import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { usePinLock } from "@/components/pin/PinProvider";
 
+type RecentActivity = {
+  id: string
+  type: 'sent' | 'signed' | 'rejected' | 'received'
+  title: string
+  date: string
+  status: string
+}
+
 export default function UserDashboard() {
   const supabase = createClient();
   const router = useRouter();
@@ -20,6 +28,11 @@ export default function UserDashboard() {
   const [docCount, setDocCount] = useState(0);
   const [pendingSignCount, setPendingSignCount] = useState(0);
   const [completedSignCount, setCompletedSignCount] = useState(0);
+  const [inProgressCount, setInProgressCount] = useState(0);
+  const [rejectedCount, setRejectedCount] = useState(0);
+
+  // ★ กิจกรรมล่าสุด
+  const [recentActivities, setRecentActivities] = useState<RecentActivity[]>([]);
 
   useEffect(() => {
     async function load() {
@@ -39,14 +52,55 @@ export default function UserDashboard() {
       const { data: sig } = await supabase.from("user_signatures").select("signature_url").eq("user_id", u.id).eq("is_active", true).maybeSingle();
       if (sig?.signature_url) setSignatureUrl(sig.signature_url);
 
+      // ★ สถิติเอกสารของฉัน
       const { count: dCount } = await supabase.from("documents").select("id", { count: "exact", head: true }).eq("user_id", u.id);
       setDocCount(dCount || 0);
 
+      // ★ สถิติเอกสารที่ส่งลงนาม (แยกสถานะ)
+      const { count: ipCount } = await supabase.from("documents").select("id", { count: "exact", head: true }).eq("user_id", u.id).in("status", ["pending_sign", "in_progress"]);
+      setInProgressCount(ipCount || 0);
+
+      const { count: rejCount } = await supabase.from("documents").select("id", { count: "exact", head: true }).eq("user_id", u.id).eq("status", "rejected");
+      setRejectedCount(rejCount || 0);
+
+      // ★ สถิติงานลงนามที่ได้รับ
       const { count: pCount } = await supabase.from("signing_workflows").select("id", { count: "exact", head: true }).eq("signer_id", u.id).eq("status", "pending");
       setPendingSignCount(pCount || 0);
 
       const { count: cCount } = await supabase.from("signing_workflows").select("id", { count: "exact", head: true }).eq("signer_id", u.id).eq("status", "completed");
       setCompletedSignCount(cCount || 0);
+
+      // ★ กิจกรรมล่าสุด (5 รายการ)
+      const { data: recentLogs } = await supabase
+        .from("audit_logs")
+        .select("id, action, entity_id, details, created_at")
+        .eq("user_id", u.id)
+        .in("action", ["document.create", "document.sign", "document.reject", "document.send_sign"])
+        .order("created_at", { ascending: false })
+        .limit(5);
+
+      if (recentLogs && recentLogs.length > 0) {
+        const activities: RecentActivity[] = recentLogs.map(log => {
+          const details = (log.details || {}) as any;
+          let type: RecentActivity['type'] = 'sent';
+          let title = details.title || 'เอกสาร';
+          let status = '';
+
+          switch (log.action) {
+            case 'document.create':
+              type = 'sent'; status = 'สร้างเอกสาร'; break;
+            case 'document.send_sign':
+              type = 'sent'; status = `ส่งลงนาม (${details.signers?.length || 0} คน)`; break;
+            case 'document.sign':
+              type = 'signed'; status = 'ลงนามแล้ว'; title = details.title || 'เอกสาร'; break;
+            case 'document.reject':
+              type = 'rejected'; status = 'ปฏิเสธ'; break;
+          }
+
+          return { id: log.id, type, title, date: log.created_at, status };
+        });
+        setRecentActivities(activities);
+      }
 
       setLoading(false);
     }
@@ -100,6 +154,7 @@ export default function UserDashboard() {
     5: { label: "ผู้ดู", color: "bg-gray-100 text-gray-600" },
   };
   const userRole = ROLES[profile?.role_id] || ROLES[5];
+  const isAdmin = profile?.role_id === 1 || profile?.role_id === 2;
 
   const statusConfig: Record<string, { label: string; chip: string; icon: string }> = {
     not_submitted: { label: "ยังไม่ส่ง KYC", chip: "bg-gray-100 text-gray-500", icon: "⏳" },
@@ -120,15 +175,26 @@ export default function UserDashboard() {
 
   const quickLinks = [
     { icon: "📄", label: "เอกสารของฉัน", desc: "สร้าง/อัปโหลดเอกสาร", path: "/dashboard/documents", color: "from-blue-500 to-blue-600" },
-    { icon: "✍️", label: "งานลงนาม", desc: "เอกสารที่รอลงนาม", path: "/dashboard/signing", color: "from-orange-500 to-orange-600" },
+    { icon: "✍️", label: "งานลงนาม", desc: `${pendingSignCount} รายการรอลงนาม`, path: "/dashboard/signing", color: "from-orange-500 to-orange-600" },
     { icon: "📜", label: "บันทึกกิจกรรม", desc: "ประวัติการดำเนินการ", path: "/dashboard/audit-log", color: "from-purple-500 to-purple-600" },
+    ...(isAdmin ? [{ icon: "⚙️", label: "จัดการระบบ", desc: "Admin Panel", path: "/admin", color: "from-red-500 to-red-600" }] : []),
   ];
 
   const stats = [
-    { icon: "📄", label: "เอกสารของฉัน", value: docCount, color: "text-blue-600", bg: "bg-blue-50" },
-    { icon: "⏳", label: "รอลงนาม", value: pendingSignCount, color: "text-orange-600", bg: "bg-orange-50" },
-    { icon: "✅", label: "ลงนามแล้ว", value: completedSignCount, color: "text-green-600", bg: "bg-green-50" },
+    { icon: "📄", label: "เอกสารทั้งหมด", value: docCount, color: "text-blue-600", bg: "bg-blue-50" },
+    { icon: "⏳", label: "รอฉันลงนาม", value: pendingSignCount, color: "text-orange-600", bg: "bg-orange-50", clickPath: "/dashboard/signing" },
+    { icon: "🔄", label: "กำลังลงนาม", value: inProgressCount, color: "text-cyan-600", bg: "bg-cyan-50" },
+    { icon: "✅", label: "ลงนามสำเร็จ", value: completedSignCount, color: "text-green-600", bg: "bg-green-50" },
+    ...(rejectedCount > 0 ? [{ icon: "❌", label: "ถูกปฏิเสธ", value: rejectedCount, color: "text-red-600", bg: "bg-red-50" }] : []),
   ];
+
+  const activityIcon: Record<string, string> = {
+    sent: '📤', signed: '✍️', rejected: '❌', received: '📥'
+  };
+  const activityColor: Record<string, string> = {
+    sent: 'bg-blue-100 text-blue-700', signed: 'bg-green-100 text-green-700',
+    rejected: 'bg-red-100 text-red-700', received: 'bg-orange-100 text-orange-700'
+  };
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -142,6 +208,17 @@ export default function UserDashboard() {
           </div>
         </div>
         <div className="ml-auto flex items-center gap-3.5">
+          {/* ★ แจ้งเตือน pending */}
+          {pendingSignCount > 0 && (
+            <button
+              onClick={() => router.push('/dashboard/signing')}
+              className="relative bg-orange-500/20 border border-orange-400/30 text-orange-300 px-3 py-1.5 rounded-md text-xs hover:bg-orange-500/30 transition-colors"
+            >
+              ✍️ {pendingSignCount} งานรอลงนาม
+              <span className="absolute -top-1 -right-1 w-2 h-2 bg-orange-500 rounded-full animate-ping" />
+              <span className="absolute -top-1 -right-1 w-2 h-2 bg-orange-500 rounded-full" />
+            </button>
+          )}
           <div className="w-9 h-9 rounded-full bg-gradient-to-br from-navy-3 to-status-cyan flex items-center justify-center text-white font-bold text-sm">{initial}</div>
           <div className="text-white">
             <span className="text-[13px] font-semibold block">{displayName}</span>
@@ -162,10 +239,15 @@ export default function UserDashboard() {
           <p className="text-[13px] text-gray-400">ระบบยืนยันตัวตน IAL 2 — ดูสถานะและจัดการข้อมูลของคุณ</p>
         </div>
 
-        {/* ★ สถิติ ★ */}
-        <div className="grid grid-cols-3 gap-4 mb-6">
+        {/* ★ สถิติ — responsive grid ★ */}
+        <div className={`grid gap-4 mb-6 ${stats.length <= 4 ? 'grid-cols-4' : 'grid-cols-5'}`}>
           {stats.map((s, i) => (
-            <div key={i} className="bg-white rounded-[14px] p-5 border border-gray-200 shadow-sm flex items-center gap-4">
+            <div
+              key={i}
+              onClick={() => (s as any).clickPath && router.push((s as any).clickPath)}
+              className={"bg-white rounded-[14px] p-5 border border-gray-200 shadow-sm flex items-center gap-4 " +
+                ((s as any).clickPath ? "cursor-pointer hover:-translate-y-0.5 transition-all" : "")}
+            >
               <div className={"w-12 h-12 rounded-xl flex items-center justify-center text-xl " + s.bg}>{s.icon}</div>
               <div>
                 <div className={"text-2xl font-extrabold " + s.color}>{s.value}</div>
@@ -220,7 +302,7 @@ export default function UserDashboard() {
         </div>
 
         {/* QUICK LINKS */}
-        <div className="grid grid-cols-3 gap-5 mb-6">
+        <div className={`grid gap-5 mb-6 ${quickLinks.length <= 3 ? 'grid-cols-3' : 'grid-cols-4'}`}>
           {quickLinks.map((link, i) => (
             <button
               key={i}
@@ -235,7 +317,7 @@ export default function UserDashboard() {
         </div>
 
         {/* INFO CARDS GRID */}
-        <div className="grid grid-cols-3 gap-5">
+        <div className="grid grid-cols-3 gap-5 mb-6">
           <div className="bg-white rounded-[14px] p-6 border border-gray-200 shadow-sm">
             <h4 className="text-sm font-bold text-navy mb-4 flex items-center gap-2">👤 ข้อมูลส่วนตัว</h4>
             <div className="space-y-0">
@@ -299,6 +381,32 @@ export default function UserDashboard() {
             </div>
           </div>
         </div>
+
+        {/* ★ กิจกรรมล่าสุด */}
+        {recentActivities.length > 0 && (
+          <div className="bg-white rounded-[14px] p-6 border border-gray-200 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-sm font-bold text-navy flex items-center gap-2">📋 กิจกรรมล่าสุด</h4>
+              <button onClick={() => router.push('/dashboard/audit-log')} className="text-xs text-blue-600 hover:underline">ดูทั้งหมด →</button>
+            </div>
+            <div className="space-y-2">
+              {recentActivities.map(act => (
+                <div key={act.id} className="flex items-center gap-3 py-2 border-b border-gray-100 last:border-b-0">
+                  <span className="text-lg">{activityIcon[act.type]}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-800 truncate">{act.title}</p>
+                    <p className="text-xs text-gray-400">
+                      {new Date(act.date).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  </div>
+                  <span className={"px-2 py-0.5 rounded-full text-[10px] font-bold " + activityColor[act.type]}>
+                    {act.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -7,14 +7,15 @@ import { logAudit } from '@/lib/audit'
 
 type Category = { id: number; code: string; name: string }
 type Doc = { id: string; title: string; document_number: string; description: string; file_url: string; file_name: string; file_size: number; status: string; created_at: string; category_id: number; document_categories?: { name: string }; user_id: string }
-type Signer = { id: string; full_name: string; email: string }
-type Workflow = { id: string; signer_id: string; step_order: number; required_action: string; status: string; user_profiles?: { full_name: string; email: string } | null }
+type Signer = { id: string; full_name: string; email: string; position?: string; department?: string }
+type Workflow = { id: string; signer_id: string; step_order: number; required_action: string; status: string; completed_at: string | null; user_profiles?: { full_name: string; email: string } | null }
 
 export default function DocumentsPage() {
   const supabase = createClient()
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  const [currentUserId, setCurrentUserId] = useState<string>('')
   const [documents, setDocuments] = useState<Doc[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(true)
@@ -31,11 +32,15 @@ export default function DocumentsPage() {
   const [workflows, setWorkflows] = useState<Workflow[]>([])
   const [viewWorkflowDoc, setViewWorkflowDoc] = useState<Doc | null>(null)
 
+  // Drag state
+  const [dragIdx, setDragIdx] = useState<number | null>(null)
+
   useEffect(() => { loadData() }, [])
 
   async function loadData() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/'); return }
+    setCurrentUserId(user.id)
 
     const { data: cats } = await supabase.from('document_categories').select('*').eq('is_active', true).order('id')
     if (cats) {
@@ -62,7 +67,7 @@ export default function DocumentsPage() {
   }
 
   async function loadSigners() {
-    const { data } = await supabase.from('user_profiles').select('id, full_name, email')
+    const { data } = await supabase.from('user_profiles').select('id, full_name, email, position, department')
     if (data) setSigners(data)
   }
 
@@ -142,10 +147,27 @@ export default function DocumentsPage() {
     }
   }
 
+  // ★ ดูไฟล์: ลอง signed-documents ก่อน ถ้าไม่เจอค่อย official-documents
   async function handleViewFile(filePath: string) {
-    const { data } = await supabase.storage.from('official-documents').createSignedUrl(filePath, 300)
-    if (data?.signedUrl) window.open(data.signedUrl, '_blank')
-    else alert('ไม่สามารถเปิดไฟล์ได้')
+    const { data: signedData } = await supabase.storage
+      .from('signed-documents')
+      .createSignedUrl(filePath, 300)
+
+    if (signedData?.signedUrl) {
+      window.open(signedData.signedUrl, '_blank')
+      return
+    }
+
+    const { data: origData } = await supabase.storage
+      .from('official-documents')
+      .createSignedUrl(filePath, 300)
+
+    if (origData?.signedUrl) {
+      window.open(origData.signedUrl, '_blank')
+      return
+    }
+
+    alert('ไม่สามารถเปิดไฟล์ได้')
   }
 
   function openSendModal(doc: Doc) {
@@ -166,10 +188,52 @@ export default function DocumentsPage() {
     setSelectedSigners(selectedSigners.map((s, i) => i === idx ? { ...s, [field]: value } : s))
   }
 
+  // ★ Drag & Drop จัดลำดับ
+  function handleDragStart(idx: number) {
+    setDragIdx(idx)
+  }
+
+  function handleDragOver(e: React.DragEvent, idx: number) {
+    e.preventDefault()
+  }
+
+  function handleDrop(idx: number) {
+    if (dragIdx === null || dragIdx === idx) return
+    const items = [...selectedSigners]
+    const [moved] = items.splice(dragIdx, 1)
+    items.splice(idx, 0, moved)
+    setSelectedSigners(items)
+    setDragIdx(null)
+  }
+
+  // ★ ย้ายขึ้น/ลง
+  function moveSigner(idx: number, direction: 'up' | 'down') {
+    const newIdx = direction === 'up' ? idx - 1 : idx + 1
+    if (newIdx < 0 || newIdx >= selectedSigners.length) return
+    const items = [...selectedSigners]
+    const temp = items[idx]
+    items[idx] = items[newIdx]
+    items[newIdx] = temp
+    setSelectedSigners(items)
+  }
+
   async function handleSendForSigning() {
     if (!sendModal) return
     if (selectedSigners.length === 0 || selectedSigners.some(s => !s.signer_id)) {
       setMessage('❌ กรุณาเลือกผู้ลงนามอย่างน้อย 1 คน')
+      return
+    }
+
+    // ★ เช็คเลือกตัวเองไหม
+    if (selectedSigners.some(s => s.signer_id === currentUserId)) {
+      setMessage('❌ ไม่สามารถเลือกตัวเองเป็นผู้ลงนามได้')
+      return
+    }
+
+    // ★ เช็คเลือกซ้ำ
+    const ids = selectedSigners.map(s => s.signer_id)
+    if (new Set(ids).size !== ids.length) {
+      setMessage('❌ เลือกผู้ลงนามซ้ำกัน กรุณาตรวจสอบ')
       return
     }
 
@@ -213,13 +277,8 @@ export default function DocumentsPage() {
   const statusConfig: Record<string, { label: string; cls: string }> = {
     draft: { label: 'ฉบับร่าง', cls: 'bg-gray-100 text-gray-600' },
     pending_sign: { label: 'รอลงนาม', cls: 'bg-yellow-100 text-yellow-700' },
-    signed: { label: 'ลงนามแล้ว', cls: 'bg-green-100 text-green-700' },
-    rejected: { label: 'ปฏิเสธ', cls: 'bg-red-100 text-red-700' },
-  }
-
-  const wfStatus: Record<string, { label: string; cls: string }> = {
-    pending: { label: 'รอลงนาม', cls: 'bg-yellow-100 text-yellow-700' },
-    signed: { label: 'ลงนามแล้ว', cls: 'bg-green-100 text-green-700' },
+    in_progress: { label: 'กำลังลงนาม', cls: 'bg-blue-100 text-blue-700' },
+    signed: { label: 'ลงนามครบแล้ว', cls: 'bg-green-100 text-green-700' },
     rejected: { label: 'ปฏิเสธ', cls: 'bg-red-100 text-red-700' },
   }
 
@@ -228,6 +287,9 @@ export default function DocumentsPage() {
     if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB'
     return (bytes / 1048576).toFixed(1) + ' MB'
   }
+
+  // ★ กรองผู้ลงนาม: ไม่แสดงตัวเอง
+  const availableSigners = signers.filter(s => s.id !== currentUserId)
 
   if (loading) return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -247,7 +309,12 @@ export default function DocumentsPage() {
           </button>
         </div>
 
-        {message && <p className="text-center text-sm mb-4 font-medium">{message}</p>}
+        {message && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 flex items-center justify-between">
+            <span className="text-sm">{message}</span>
+            <button onClick={() => setMessage('')} className="text-gray-400 hover:text-gray-600 text-lg">×</button>
+          </div>
+        )}
 
         {showCreate && (
           <div className="bg-white rounded-lg shadow p-6 mb-6">
@@ -314,7 +381,7 @@ export default function DocumentsPage() {
                         {doc.status === 'draft' && (
                           <button onClick={() => openSendModal(doc)} className="text-orange-600 text-xs font-semibold hover:underline">ส่งลงนาม</button>
                         )}
-                        {doc.status === 'pending_sign' && (
+                        {['pending_sign', 'in_progress', 'signed', 'rejected'].includes(doc.status) && (
                           <button onClick={() => openWorkflow(doc)} className="text-purple-600 text-xs font-semibold hover:underline">ดูสถานะ</button>
                         )}
                       </div>
@@ -327,39 +394,97 @@ export default function DocumentsPage() {
         </div>
       </div>
 
+      {/* ★ Modal ส่งลงนาม — พร้อม Drag & Drop + ปุ่มขึ้น/ลง */}
       {sendModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={() => setSendModal(null)}>
-          <div className="bg-white rounded-xl w-full max-w-lg p-6 shadow-lg" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-xl w-full max-w-lg p-6 shadow-lg max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold">📨 ส่งลงนาม</h3>
               <button onClick={() => setSendModal(null)} className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center hover:bg-gray-200">✕</button>
             </div>
             <p className="text-sm text-gray-500 mb-1">เอกสาร: <strong>{sendModal.title}</strong></p>
-            <p className="text-xs text-gray-400 mb-4">เลือกผู้ลงนามตามลำดับ (ลำดับ 1 จะลงนามก่อน)</p>
+            <p className="text-xs text-gray-400 mb-4">🔢 เลือกผู้ลงนามตามลำดับ — ลากหรือใช้ลูกศรจัดลำดับ (ลำดับ 1 ลงนามก่อน)</p>
 
             {selectedSigners.map((s, i) => (
-              <div key={i} className="flex items-center gap-2 mb-2">
-                <span className="text-xs font-bold text-gray-400 w-6">{i + 1}.</span>
-                <select value={s.signer_id} onChange={e => updateSigner(i, 'signer_id', e.target.value)} className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none">
-                  <option value="">-- เลือกผู้ลงนาม --</option>
-                  {signers.map(u => <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>)}
-                </select>
-                <select value={s.action} onChange={e => updateSigner(i, 'action', e.target.value)} className="px-2 py-2 border border-gray-200 rounded-lg text-xs outline-none">
-                  <option value="sign">ลงนาม</option>
-                  <option value="approve">อนุมัติ</option>
-                  <option value="review">ตรวจสอบ</option>
-                </select>
-                <button onClick={() => removeSigner(i)} className="text-red-500 text-sm hover:text-red-700">🗑️</button>
+              <div
+                key={i}
+                draggable
+                onDragStart={() => handleDragStart(i)}
+                onDragOver={(e) => handleDragOver(e, i)}
+                onDrop={() => handleDrop(i)}
+                className={"flex items-center gap-2 mb-2 p-2 rounded-lg border transition-colors " +
+                  (dragIdx === i ? "border-blue-400 bg-blue-50" : "border-gray-200 bg-white hover:bg-gray-50")}
+              >
+                {/* ลำดับ + ลูกศร */}
+                <div className="flex flex-col items-center gap-0.5">
+                  <button
+                    onClick={() => moveSigner(i, 'up')}
+                    disabled={i === 0}
+                    className="text-gray-400 hover:text-blue-600 disabled:opacity-20 text-xs"
+                  >▲</button>
+                  <span className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold cursor-grab">{i + 1}</span>
+                  <button
+                    onClick={() => moveSigner(i, 'down')}
+                    disabled={i === selectedSigners.length - 1}
+                    className="text-gray-400 hover:text-blue-600 disabled:opacity-20 text-xs"
+                  >▼</button>
+                </div>
+
+                <div className="flex-1 space-y-1">
+                  <select value={s.signer_id} onChange={e => updateSigner(i, 'signer_id', e.target.value)} className="w-full px-3 py-1.5 border border-gray-200 rounded text-sm outline-none">
+                    <option value="">-- เลือกผู้ลงนาม --</option>
+                    {availableSigners.map(u => (
+                      <option key={u.id} value={u.id} disabled={selectedSigners.some((ss, si) => si !== i && ss.signer_id === u.id)}>
+                        {u.full_name} {u.position ? `(${u.position})` : ''} {u.department ? `- ${u.department}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <select value={s.action} onChange={e => updateSigner(i, 'action', e.target.value)} className="w-full px-3 py-1.5 border border-gray-200 rounded text-xs outline-none">
+                    <option value="sign">✍️ ลงนาม</option>
+                    <option value="approve">👍 อนุมัติ</option>
+                    <option value="review">🔍 ตรวจสอบ</option>
+                  </select>
+                </div>
+
+                <button onClick={() => removeSigner(i)} className="text-red-400 hover:text-red-600 text-lg px-1">🗑️</button>
               </div>
             ))}
 
-            <button onClick={addSigner} className="text-blue-600 text-sm font-semibold mb-4 hover:underline">+ เพิ่มผู้ลงนาม</button>
+            <button onClick={addSigner} className="w-full py-2 border-2 border-dashed border-gray-300 rounded-lg text-sm text-gray-500 hover:border-blue-400 hover:text-blue-600 transition-colors mb-4">
+              + เพิ่มผู้ลงนาม
+            </button>
 
-            <button onClick={handleSendForSigning} className="w-full py-2.5 bg-orange-500 text-white rounded-lg font-semibold hover:bg-orange-600">📨 ส่งลงนาม</button>
+            {selectedSigners.length > 0 && (
+              <div className="bg-gray-50 rounded-lg p-3 mb-4">
+                <p className="text-xs font-semibold text-gray-500 mb-2">📋 ลำดับการลงนาม:</p>
+                <div className="flex items-center gap-1 flex-wrap">
+                  {selectedSigners.map((s, i) => {
+                    const signer = availableSigners.find(u => u.id === s.signer_id)
+                    return (
+                      <div key={i} className="flex items-center gap-1">
+                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-semibold">
+                          {i + 1}. {signer?.full_name || '(ยังไม่เลือก)'}
+                        </span>
+                        {i < selectedSigners.length - 1 && <span className="text-gray-300">→</span>}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            <button
+              onClick={handleSendForSigning}
+              disabled={selectedSigners.length === 0 || selectedSigners.some(s => !s.signer_id)}
+              className="w-full py-2.5 bg-orange-500 text-white rounded-lg font-semibold hover:bg-orange-600 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              📨 ส่งลงนาม ({selectedSigners.length} คน)
+            </button>
           </div>
         </div>
       )}
 
+      {/* ★ Modal ดูสถานะ — Timeline แบบใหม่ */}
       {viewWorkflowDoc && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={() => setViewWorkflowDoc(null)}>
           <div className="bg-white rounded-xl w-full max-w-lg p-6 shadow-lg" onClick={e => e.stopPropagation()}>
@@ -367,27 +492,74 @@ export default function DocumentsPage() {
               <h3 className="text-lg font-bold">📋 สถานะการลงนาม</h3>
               <button onClick={() => setViewWorkflowDoc(null)} className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center hover:bg-gray-200">✕</button>
             </div>
-            <p className="text-sm text-gray-500 mb-4">เอกสาร: <strong>{viewWorkflowDoc.title}</strong></p>
+            <p className="text-sm text-gray-500 mb-1">เอกสาร: <strong>{viewWorkflowDoc.title}</strong></p>
+
+            {/* Progress */}
+            {workflows.length > 0 && (
+              <div className="mb-4">
+                <div className="flex justify-between text-xs text-gray-400 mb-1">
+                  <span>ความคืบหน้า</span>
+                  <span>{workflows.filter(w => w.status === 'completed').length}/{workflows.length} คน</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div
+                    className="bg-green-500 h-2 rounded-full transition-all"
+                    style={{ width: `${(workflows.filter(w => w.status === 'completed').length / workflows.length) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
 
             {workflows.length === 0 ? (
               <p className="text-gray-400 text-sm text-center py-6">ไม่มีข้อมูล</p>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-0">
                 {workflows.map((w, i) => {
-                  const ws = wfStatus[w.status] || wfStatus.pending
+                  const isDone = w.status === 'completed'
+                  const isRejected = w.status === 'rejected'
+                  const isPending = w.status === 'pending'
+                  const isCurrent = isPending && !workflows.slice(0, i).some(ww => ww.status === 'pending')
+                  const isLast = i === workflows.length - 1
+
+                  const actionText = w.required_action === 'sign' ? 'ลงนาม' : w.required_action === 'approve' ? 'อนุมัติ' : 'ตรวจสอบ'
+
                   return (
-                    <div key={w.id} className="flex items-center gap-3 p-3 border border-gray-100 rounded-lg">
-                      <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-sm font-bold">{i + 1}</div>
-                      <div className="flex-1">
-                        <div className="text-sm font-semibold">{w.user_profiles?.full_name || '-'}</div>
-                        <div className="text-xs text-gray-400">{w.required_action === 'sign' ? 'ลงนาม' : w.required_action === 'approve' ? 'อนุมัติ' : 'ตรวจสอบ'}</div>
+                    <div key={w.id}>
+                      <div className="flex items-center gap-3 py-2">
+                        <div className={"w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 border-2 " +
+                          (isDone ? "bg-green-100 border-green-500 text-green-700" :
+                           isRejected ? "bg-red-100 border-red-500 text-red-700" :
+                           isCurrent ? "bg-blue-100 border-blue-500 text-blue-700 ring-2 ring-blue-300" :
+                           "bg-gray-100 border-gray-300 text-gray-400")}>
+                          {isDone ? "✓" : isRejected ? "✗" : w.step_order}
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold text-gray-800">{w.user_profiles?.full_name || '-'}</p>
+                          <p className="text-xs text-gray-400">{actionText}</p>
+                        </div>
+                        <div className="text-right">
+                          <span className={"px-2 py-0.5 rounded-full text-xs font-bold " +
+                            (isDone ? "bg-green-100 text-green-700" :
+                             isRejected ? "bg-red-100 text-red-700" :
+                             isCurrent ? "bg-blue-100 text-blue-700" :
+                             "bg-gray-100 text-gray-500")}>
+                            {isDone ? "✅ เสร็จแล้ว" : isRejected ? "❌ ปฏิเสธ" : isCurrent ? "⏳ กำลังรอ" : "🔒 รอคิว"}
+                          </span>
+                          {w.completed_at && (
+                            <p className="text-[10px] text-gray-400 mt-0.5">
+                              {new Date(w.completed_at).toLocaleString('th-TH')}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                      <span className={"px-2 py-0.5 rounded-full text-xs font-bold " + ws.cls}>{ws.label}</span>
+                      {!isLast && <div className="ml-4 w-0.5 h-3 bg-gray-200" />}
                     </div>
                   )
                 })}
               </div>
             )}
+
+            <button onClick={() => setViewWorkflowDoc(null)} className="mt-5 w-full py-2.5 bg-gray-100 text-gray-600 rounded-lg font-semibold hover:bg-gray-200">ปิด</button>
           </div>
         </div>
       )}

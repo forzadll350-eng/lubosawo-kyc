@@ -15,6 +15,9 @@ type Task = {
   doc_file_url?: string
   doc_status?: string
   owner_name?: string
+  can_sign: boolean
+  waiting_for?: string
+  total_steps: number
 }
 
 type DocSignature = {
@@ -26,6 +29,15 @@ type DocSignature = {
   signed_at: string
   signature_url?: string
   full_name?: string
+}
+
+type WorkflowStep = {
+  id: string
+  document_id: string
+  signer_id: string
+  step_order: number
+  status: string
+  signer_name?: string
 }
 
 export default function SigningPage() {
@@ -41,6 +53,10 @@ export default function SigningPage() {
   const [docSignatures, setDocSignatures] = useState<DocSignature[]>([])
   const [showSigModal, setShowSigModal] = useState(false)
   const [sigModalTitle, setSigModalTitle] = useState('')
+
+  const [stepsModal, setStepsModal] = useState<WorkflowStep[]>([])
+  const [showStepsModal, setShowStepsModal] = useState(false)
+  const [stepsModalTitle, setStepsModalTitle] = useState('')
 
   useEffect(() => { loadData() }, [])
 
@@ -64,25 +80,62 @@ export default function SigningPage() {
 
     if (wf && wf.length > 0) {
       const docIds = [...new Set(wf.map(w => w.document_id).filter(Boolean))]
+
+      // ดึงเอกสาร
       const { data: docs } = await supabase
         .from('documents')
         .select('id, title, document_number, file_url, status, user_id')
         .in('id', docIds)
 
+      // ดึง workflow ทั้งหมดของเอกสารเหล่านี้ (เพื่อเช็คลำดับ)
+      const { data: allWorkflows } = await supabase
+        .from('signing_workflows')
+        .select('id, document_id, signer_id, step_order, status')
+        .in('document_id', docIds)
+        .order('step_order', { ascending: true })
+
+      // ดึงชื่อเจ้าของเอกสาร + ผู้ลงนามทั้งหมด
       const ownerIds = [...new Set(docs?.map(d => d.user_id).filter(Boolean) || [])]
+      const signerIds = [...new Set(allWorkflows?.map(w => w.signer_id).filter(Boolean) || [])]
+      const allUserIds = [...new Set([...ownerIds, ...signerIds])]
+
       let profileMap = new Map()
-      if (ownerIds.length > 0) {
+      if (allUserIds.length > 0) {
         const { data: profiles } = await supabase
           .from('user_profiles')
           .select('id, full_name')
-          .in('id', ownerIds)
+          .in('id', allUserIds)
         profileMap = new Map(profiles?.map(p => [p.id, p.full_name]) || [])
       }
 
       const docMap = new Map(docs?.map(d => [d.id, d]) || [])
 
+      // จัดกลุ่ม workflow ตาม document_id
+      const workflowsByDoc = new Map<string, typeof allWorkflows>()
+      allWorkflows?.forEach(w => {
+        const arr = workflowsByDoc.get(w.document_id) || []
+        arr.push(w)
+        workflowsByDoc.set(w.document_id, arr)
+      })
+
       const enriched: Task[] = wf.map(w => {
         const doc = docMap.get(w.document_id)
+        const docWorkflows = workflowsByDoc.get(w.document_id) || []
+        const totalSteps = docWorkflows.length
+
+        // เช็คว่าคนก่อนหน้าลงนามครบหรือยัง
+        let canSign = true
+        let waitingFor = ''
+
+        const previousSteps = docWorkflows.filter(dw => dw.step_order < w.step_order)
+        const incompletePrev = previousSteps.filter(dw => dw.status !== 'completed')
+
+        if (incompletePrev.length > 0) {
+          canSign = false
+          const waitingNames = incompletePrev.map(dw => profileMap.get(dw.signer_id) || 'ผู้ลงนาม').join(', ')
+          waitingFor = waitingNames
+        }
+
         return {
           id: w.id,
           document_id: w.document_id,
@@ -94,6 +147,9 @@ export default function SigningPage() {
           doc_file_url: doc?.file_url || '',
           doc_status: doc?.status || '',
           owner_name: doc ? (profileMap.get(doc.user_id) || '-') : '-',
+          can_sign: canSign,
+          waiting_for: waitingFor,
+          total_steps: totalSteps,
         }
       })
 
@@ -105,9 +161,7 @@ export default function SigningPage() {
     setLoading(false)
   }
 
-  // ★ แก้ตรงนี้: ลองดึงจาก signed-documents ก่อน ถ้าไม่เจอค่อย official-documents ★
   async function handleViewFile(filePath: string) {
-    // ลอง signed-documents ก่อน
     const { data: signedData } = await supabase.storage
       .from('signed-documents')
       .createSignedUrl(filePath, 300)
@@ -117,7 +171,6 @@ export default function SigningPage() {
       return
     }
 
-    // ลอง official-documents
     const { data: origData } = await supabase.storage
       .from('official-documents')
       .createSignedUrl(filePath, 300)
@@ -128,6 +181,33 @@ export default function SigningPage() {
     }
 
     alert('ไม่สามารถเปิดไฟล์ได้')
+  }
+
+  async function handleViewSteps(task: Task) {
+    const { data: allWf } = await supabase
+      .from('signing_workflows')
+      .select('id, document_id, signer_id, step_order, status')
+      .eq('document_id', task.document_id)
+      .order('step_order', { ascending: true })
+
+    if (allWf) {
+      const signerIds = [...new Set(allWf.map(w => w.signer_id))]
+      const { data: profiles } = await supabase
+        .from('user_profiles')
+        .select('id, full_name')
+        .in('id', signerIds)
+      const nameMap = new Map(profiles?.map(p => [p.id, p.full_name]) || [])
+
+      const steps: WorkflowStep[] = allWf.map(w => ({
+        ...w,
+        signer_name: nameMap.get(w.signer_id) || '-',
+      }))
+
+      setStepsModal(steps)
+    }
+
+    setStepsModalTitle(task.doc_title || 'เอกสาร')
+    setShowStepsModal(true)
   }
 
   async function handleViewSignatures(task: Task) {
@@ -204,25 +284,35 @@ export default function SigningPage() {
           signed_at: new Date().toISOString(),
         })
 
+      // อัปเดต workflow ตัวเอง
       await supabase
         .from('signing_workflows')
         .update({ status: 'rejected', completed_at: new Date().toISOString() })
         .eq('id', task.id)
 
+      // อัปเดตเอกสาร
       await supabase
         .from('documents')
         .update({ status: 'rejected', updated_at: new Date().toISOString() })
         .eq('id', task.document_id)
+
+      // ยกเลิก workflow คนถัดไปด้วย (เพราะเอกสารถูกปฏิเสธแล้ว)
+      await supabase
+        .from('signing_workflows')
+        .update({ status: 'rejected', completed_at: new Date().toISOString() })
+        .eq('document_id', task.document_id)
+        .gt('step_order', task.step_order)
+        .eq('status', 'pending')
 
       await supabase.from('audit_logs').insert({
         user_id: user.id,
         action: 'document.reject',
         entity_type: 'document',
         entity_id: task.document_id,
-        details: { workflow_id: task.id, reason },
+        details: { workflow_id: task.id, reason, step_order: task.step_order },
       })
 
-      setMessage('❌ ปฏิเสธเอกสารแล้ว')
+      setMessage('❌ ปฏิเสธเอกสารแล้ว — workflow คนถัดไปถูกยกเลิกโดยอัตโนมัติ')
       loadData()
     } catch (err: any) {
       setMessage(`❌ ${err.message}`)
@@ -251,7 +341,7 @@ export default function SigningPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-5xl mx-auto">
         <button onClick={() => router.push('/dashboard')} className="text-blue-600 hover:underline mb-4 inline-block">← กลับหน้า Dashboard</button>
 
         <h1 className="text-2xl font-bold mb-2">✍️ งานลงนามของฉัน</h1>
@@ -290,22 +380,41 @@ export default function SigningPage() {
           <table className="w-full">
             <thead>
               <tr className="bg-gray-50">
-                {['เอกสาร', 'ผู้ส่ง', 'ประเภท', 'สถานะ', 'จัดการ'].map(h => (
+                {['ลำดับ', 'เอกสาร', 'ผู้ส่ง', 'ประเภท', 'สถานะ', 'จัดการ'].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-bold text-gray-500 border-b">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={5} className="text-center py-12 text-gray-400 text-sm">ไม่มีงาน</td></tr>
+                <tr><td colSpan={6} className="text-center py-12 text-gray-400 text-sm">ไม่มีงาน</td></tr>
               ) : filtered.map(task => {
                 const sc = statusConfig[task.status] || statusConfig.pending
                 return (
                   <tr key={task.id} className="hover:bg-gray-50">
+                    {/* ลำดับ */}
+                    <td className="px-4 py-3 border-b border-gray-100">
+                      <button
+                        onClick={() => handleViewSteps(task)}
+                        className="flex flex-col items-center gap-0.5 hover:opacity-70"
+                        title="ดูลำดับทั้งหมด"
+                      >
+                        <span className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-sm font-bold">{task.step_order}</span>
+                        <span className="text-[10px] text-gray-400">จาก {task.total_steps}</span>
+                      </button>
+                    </td>
+
+                    {/* เอกสาร */}
                     <td className="px-4 py-3 border-b border-gray-100">
                       <div className="text-sm font-semibold text-gray-800">{task.doc_title}</div>
                       {task.doc_number && <small className="text-xs text-gray-400">{task.doc_number}</small>}
+                      {task.status === 'pending' && !task.can_sign && task.waiting_for && (
+                        <div className="mt-1 text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded">
+                          ⏳ รอ {task.waiting_for} ลงนามก่อน
+                        </div>
+                      )}
                     </td>
+
                     <td className="px-4 py-3 border-b border-gray-100 text-xs text-gray-500">{task.owner_name}</td>
                     <td className="px-4 py-3 border-b border-gray-100 text-xs">{actionLabel[task.required_action] || task.required_action}</td>
                     <td className="px-4 py-3 border-b border-gray-100">
@@ -316,11 +425,14 @@ export default function SigningPage() {
                         {task.doc_file_url && (
                           <button onClick={() => handleViewFile(task.doc_file_url!)} className="text-blue-600 text-xs font-semibold hover:underline">ดู</button>
                         )}
-                        {task.status === 'pending' && (
+                        {task.status === 'pending' && task.can_sign && (
                           <>
                             <button onClick={() => router.push(`/dashboard/signing/${task.id}`)} className="text-green-600 text-xs font-semibold hover:underline">ลงนาม</button>
                             <button onClick={() => handleReject(task)} className="text-red-600 text-xs font-semibold hover:underline">ปฏิเสธ</button>
                           </>
+                        )}
+                        {task.status === 'pending' && !task.can_sign && (
+                          <span className="text-gray-400 text-xs">🔒 ยังไม่ถึงคิว</span>
                         )}
                         {task.status === 'completed' && (
                           <button onClick={() => handleViewSignatures(task)} className="text-purple-600 text-xs font-semibold hover:underline">ดูลายเซ็น</button>
@@ -335,6 +447,50 @@ export default function SigningPage() {
         </div>
       </div>
 
+      {/* Modal ดูลำดับลงนาม */}
+      {showStepsModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={() => setShowStepsModal(false)}>
+          <div className="bg-white rounded-xl w-full max-w-md p-6 shadow-lg" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-bold mb-1">📋 ลำดับการลงนาม</h3>
+            <p className="text-sm text-gray-500 mb-4">{stepsModalTitle}</p>
+
+            <div className="space-y-0">
+              {stepsModal.map((step, i) => {
+                const isCompleted = step.status === 'completed'
+                const isRejected = step.status === 'rejected'
+                const isPending = step.status === 'pending'
+                const isLast = i === stepsModal.length - 1
+
+                return (
+                  <div key={step.id}>
+                    <div className="flex items-center gap-3">
+                      <div className={"w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 border-2 " +
+                        (isCompleted ? "bg-green-100 border-green-500 text-green-700" :
+                         isRejected ? "bg-red-100 border-red-500 text-red-700" :
+                         "bg-gray-100 border-gray-300 text-gray-500")}>
+                        {isCompleted ? "✓" : isRejected ? "✗" : step.step_order}
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold text-gray-800">{step.signer_name}</p>
+                        <p className={"text-xs " +
+                          (isCompleted ? "text-green-600" : isRejected ? "text-red-600" : "text-gray-400")}>
+                          {isCompleted ? "✅ ลงนามแล้ว" : isRejected ? "❌ ปฏิเสธ" : "⏳ รอลงนาม"}
+                        </p>
+                      </div>
+                      <span className="text-xs text-gray-400">ลำดับ {step.step_order}</span>
+                    </div>
+                    {!isLast && <div className="ml-4 w-0.5 h-4 bg-gray-200 my-1" />}
+                  </div>
+                )
+              })}
+            </div>
+
+            <button onClick={() => setShowStepsModal(false)} className="mt-5 w-full py-2.5 bg-gray-100 text-gray-600 rounded-lg font-semibold hover:bg-gray-200">ปิด</button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal ดูลายเซ็น */}
       {showSigModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={() => setShowSigModal(false)}>
           <div className="bg-white rounded-xl w-full max-w-lg p-6 shadow-lg max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
