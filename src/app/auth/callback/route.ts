@@ -13,9 +13,9 @@ export async function GET(request: NextRequest) {
   if (code) {
     await supabase.auth.exchangeCodeForSession(code)
     if (type === 'recovery') {
-      return NextResponse.redirect(${origin}/auth/update-password)
+      return NextResponse.redirect(origin + '/auth/update-password')
     }
-    return NextResponse.redirect(${origin})
+    return NextResponse.redirect(origin)
   }
 
   if (token_hash && type === 'recovery') {
@@ -24,9 +24,9 @@ export async function GET(request: NextRequest) {
       type: 'recovery',
     })
     if (!error) {
-      return NextResponse.redirect(${origin}/auth/update-password)
+      return NextResponse.redirect(origin + '/auth/update-password')
     }
   }
 
-  return NextResponse.redirect(${origin})
+  return NextResponse.redirect(origin)
 }

@@ -16,11 +16,11 @@ export async function GET(request: NextRequest) {
 
     if (!error) {
       if (type === 'recovery') {
-        return NextResponse.redirect(${origin}/auth/update-password)
+        return NextResponse.redirect(origin + '/auth/update-password')
       }
-      return NextResponse.redirect(${origin})
+      return NextResponse.redirect(origin)
     }
   }
 
-  return NextResponse.redirect(${origin}/?error=invalid_link)
+  return NextResponse.redirect(origin + '/?error=invalid_link')
 }
