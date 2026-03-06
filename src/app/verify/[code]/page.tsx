@@ -116,7 +116,9 @@ export default function VerifyPage() {
 
       const kycMap = new Map<string, any>()
       kycList?.forEach(k => {
-        if (!kycMap.has(k.user_id)) kycMap.set(k.user_id, k)
+        if (!kycMap.has(k.user_id) || (kycMap.get(k.user_id).status !== 'approved' && k.status === 'approved')) {
+          kycMap.set(k.user_id, k)
+        }
       })
 
       const sigBySigner = new Map<string, any>()
@@ -274,8 +276,8 @@ export default function VerifyPage() {
   const statusText = isRejected
     ? '❌ เอกสารถูกปฏิเสธ'
     : isFullySigned
-    ? '✅ ลงนามครบทุกลำดับแล้ว'
-    : `⏳ อยู่ระหว่างลงนาม (${completedCount}/${totalCount})`
+      ? '✅ ลงนามครบทุกลำดับแล้ว'
+      : `⏳ อยู่ระหว่างลงนาม (${completedCount}/${totalCount})`
 
   if (loading) return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -302,14 +304,12 @@ export default function VerifyPage() {
 
         {/* ✅ HEADER */}
         <div className="bg-white rounded-xl shadow-lg p-6 mb-4 text-center">
-          <div className={`inline-flex items-center justify-center w-16 h-16 rounded-full mb-3 ${
-            isRejected ? 'bg-red-100' : isFullySigned ? 'bg-green-100' : 'bg-yellow-100'
-          }`}>
+          <div className={`inline-flex items-center justify-center w-16 h-16 rounded-full mb-3 ${isRejected ? 'bg-red-100' : isFullySigned ? 'bg-green-100' : 'bg-yellow-100'
+            }`}>
             <span className="text-3xl">{isRejected ? '❌' : isFullySigned ? '✅' : '⏳'}</span>
           </div>
-          <h1 className={`text-xl font-bold ${
-            isRejected ? 'text-red-700' : isFullySigned ? 'text-green-700' : 'text-yellow-700'
-          }`}>
+          <h1 className={`text-xl font-bold ${isRejected ? 'text-red-700' : isFullySigned ? 'text-green-700' : 'text-yellow-700'
+            }`}>
             {isRejected ? 'เอกสารถูกปฏิเสธ' : isFullySigned ? 'เอกสารได้รับการลงนามครบแล้ว' : 'เอกสารอยู่ระหว่างการลงนาม'}
           </h1>
           <p className="text-xs text-gray-400 mt-1">ระบบยืนยันตัวตนดิจิทัล IAL 2 — อบต.ลุโบะสาวอ</p>
@@ -329,11 +329,10 @@ export default function VerifyPage() {
             </div>
             <div className="flex justify-between">
               <span className="text-gray-500">สถานะ</span>
-              <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
-                isRejected ? 'bg-red-100 text-red-700' :
-                isFullySigned ? 'bg-green-100 text-green-700' :
-                'bg-yellow-100 text-yellow-700'
-              }`}>
+              <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${isRejected ? 'bg-red-100 text-red-700' :
+                  isFullySigned ? 'bg-green-100 text-green-700' :
+                    'bg-yellow-100 text-yellow-700'
+                }`}>
                 {statusText}
               </span>
             </div>
@@ -347,9 +346,8 @@ export default function VerifyPage() {
               </div>
               <div className="w-full bg-gray-200 rounded-full h-2.5">
                 <div
-                  className={`h-2.5 rounded-full transition-all ${
-                    isRejected ? 'bg-red-500' : isFullySigned ? 'bg-green-500' : 'bg-yellow-500'
-                  }`}
+                  className={`h-2.5 rounded-full transition-all ${isRejected ? 'bg-red-500' : isFullySigned ? 'bg-green-500' : 'bg-yellow-500'
+                    }`}
                   style={{ width: `${(completedCount / totalCount) * 100}%` }}
                 />
               </div>
@@ -380,23 +378,23 @@ export default function VerifyPage() {
 
               const actionText = step.required_action === 'sign' ? '✍️ ลงนาม'
                 : step.required_action === 'approve' ? '👍 อนุมัติ'
-                : '🔍 ตรวจสอบ'
+                  : '🔍 ตรวจสอบ'
 
               return (
                 <div key={step.id}>
                   <div className={"rounded-lg p-4 " +
                     (isDone ? "bg-green-50 border border-green-200" :
-                     isRej ? "bg-red-50 border border-red-200" :
-                     isCurrent ? "bg-blue-50 border border-blue-200" :
-                     "bg-gray-50 border border-gray-200")
+                      isRej ? "bg-red-50 border border-red-200" :
+                        isCurrent ? "bg-blue-50 border border-blue-200" :
+                          "bg-gray-50 border border-gray-200")
                   }>
                     <div className="flex items-start justify-between mb-2">
                       <div className="flex items-center gap-2">
                         <div className={"w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold border-2 " +
                           (isDone ? "bg-green-100 border-green-500 text-green-700" :
-                           isRej ? "bg-red-100 border-red-500 text-red-700" :
-                           isCurrent ? "bg-blue-100 border-blue-500 text-blue-700" :
-                           "bg-gray-100 border-gray-300 text-gray-400")}>
+                            isRej ? "bg-red-100 border-red-500 text-red-700" :
+                              isCurrent ? "bg-blue-100 border-blue-500 text-blue-700" :
+                                "bg-gray-100 border-gray-300 text-gray-400")}>
                           {isDone ? "✓" : isRej ? "✗" : step.step_order}
                         </div>
                         <div>
@@ -408,9 +406,9 @@ export default function VerifyPage() {
                       <div className="text-right">
                         <span className={"px-2 py-0.5 rounded-full text-xs font-bold " +
                           (isDone ? "bg-green-100 text-green-700" :
-                           isRej ? "bg-red-100 text-red-700" :
-                           isCurrent ? "bg-blue-100 text-blue-700" :
-                           "bg-gray-100 text-gray-500")}>
+                            isRej ? "bg-red-100 text-red-700" :
+                              isCurrent ? "bg-blue-100 text-blue-700" :
+                                "bg-gray-100 text-gray-500")}>
                           {isDone ? "✅ เสร็จแล้ว" : isRej ? "❌ ปฏิเสธ" : isCurrent ? "⏳ กำลังรอ" : "🔒 รอคิว"}
                         </span>
                         <p className="text-[10px] text-gray-400 mt-0.5">{actionText}</p>
@@ -549,11 +547,10 @@ export default function VerifyPage() {
               onDragLeave={() => setDragOver(false)}
               onDrop={handleFileDrop}
               onClick={() => fileInputRef.current?.click()}
-              className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
-                dragOver
+              className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${dragOver
                   ? 'border-blue-500 bg-blue-50'
                   : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'
-              }`}
+                }`}
             >
               <div className="text-4xl mb-2">{dragOver ? '📥' : '📄'}</div>
               <p className="text-sm font-semibold text-gray-700">
@@ -572,7 +569,7 @@ export default function VerifyPage() {
 
           <div className="mt-3 bg-gray-50 rounded-lg p-3">
             <p className="text-[10px] text-gray-500">
-              <strong>🔒 ปลอดภัย:</strong> ไฟล์จะถูกประมวลผลบนเครื่องของคุณเท่านั้น (Client-side) 
+              <strong>🔒 ปลอดภัย:</strong> ไฟล์จะถูกประมวลผลบนเครื่องของคุณเท่านั้น (Client-side)
               ไม่มีการอัปโหลดไฟล์ไปยังเซิร์ฟเวอร์ ระบบจะคำนวณ SHA-256 Hash แล้วเปรียบเทียบกับค่าที่บันทึกไว้ในระบบ
             </p>
           </div>
@@ -590,8 +587,8 @@ export default function VerifyPage() {
           </div>
           <div className="mt-3 bg-gray-50 rounded-lg p-3">
             <p className="text-xs text-gray-600">
-              <strong>🔗 การลงนามตามลำดับ</strong> — เอกสารนี้ถูกลงนามตามลำดับที่กำหนด 
-              โดยผู้ลงนามแต่ละคนจะลงนามบนไฟล์ที่มีลายเซ็นก่อนหน้าแล้ว 
+              <strong>🔗 การลงนามตามลำดับ</strong> — เอกสารนี้ถูกลงนามตามลำดับที่กำหนด
+              โดยผู้ลงนามแต่ละคนจะลงนามบนไฟล์ที่มีลายเซ็นก่อนหน้าแล้ว
               Document Hash (SHA-256) แต่ละรอบสามารถใช้ตรวจสอบความถูกต้องได้
             </p>
           </div>

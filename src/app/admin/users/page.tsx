@@ -78,7 +78,9 @@ export default function AdminUsersPage() {
 
       const kycMap = new Map<string, string>()
       kycList?.forEach(k => {
-        if (!kycMap.has(k.user_id)) kycMap.set(k.user_id, k.status)
+        if (!kycMap.has(k.user_id) || (kycMap.get(k.user_id) !== 'approved' && k.status === 'approved')) {
+          kycMap.set(k.user_id, k.status)
+        }
       })
 
       const enriched: UserProfile[] = profiles.map(p => ({
