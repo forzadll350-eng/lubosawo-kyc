@@ -127,7 +127,7 @@ export default function VerifyPage() {
       if (allUserIds.length > 0) {
         const { data: kycRows } = await supabase
           .from('kyc_submissions')
-          .select('user_id, status, verification_method, verified_at')
+          .select('user_id, status, reviewed_at')
           .in('user_id', allUserIds)
           .order('created_at', { ascending: false })
         kycList = kycRows || []
@@ -179,8 +179,8 @@ export default function VerifyPage() {
                   full_name: profile?.full_name || '-',
                   kyc_status: kyc?.status || 'unknown',
                   kyc_method:
-                    kyc?.verification_method || 'บัตรประชาชน + Selfie',
-                  kyc_verified_at: kyc?.verified_at || null,
+                    'บัตรประชาชน + Selfie',
+                  kyc_verified_at: kyc?.reviewed_at || null,
                 }
               : null,
           }
@@ -204,8 +204,8 @@ export default function VerifyPage() {
             full_name: profile?.full_name || '-',
             kyc_status: kyc?.status || 'unknown',
             kyc_method:
-              kyc?.verification_method || 'บัตรประชาชน + Selfie',
-            kyc_verified_at: kyc?.verified_at || null,
+              'บัตรประชาชน + Selfie',
+            kyc_verified_at: kyc?.reviewed_at || null,
           }
         })
         setSigners(enrichedSigs)
