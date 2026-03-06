@@ -19,7 +19,7 @@ export default function UpdatePasswordPage() {
       setError('รหัสผ่านไม่ตรงกัน')
       return
     }
-    if (password.length < 6) {
+    if (password.length < 8) {
       setError('รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร')
       return
     }
