@@ -36,6 +36,8 @@ export default function SignDocumentPage() {
 
   const [signatureUrl, setSignatureUrl] = useState<string | null>(null)
   const [signatureId, setSignatureId] = useState<string | null>(null)
+  const [stampUrl, setStampUrl] = useState<string | null>(null)
+  const [includeStamp, setIncludeStamp] = useState(false)
   const [profile, setProfile] = useState<any>(null)
 
   const pdfBytesForViewer = useRef<Uint8Array | null>(null)
@@ -50,6 +52,33 @@ export default function SignDocumentPage() {
   const [allSteps, setAllSteps] = useState<StepInfo[]>([])
   const [canSign, setCanSign] = useState(false)
   const [waitingFor, setWaitingFor] = useState('')
+
+  async function loadLatestStamp(userId: string) {
+    const { data, error } = await supabase
+      .from('user_signatures')
+      .select('signature_url')
+      .eq('user_id', userId)
+      .like('signature_url', '%/stamp_%')
+      .limit(20)
+
+    if (error || !data?.length) {
+      setStampUrl(null)
+      setIncludeStamp(false)
+      return
+    }
+
+    const parseStampTime = (url: string) => {
+      const match = url.match(/stamp_(\d+)\.png/i)
+      return match ? Number(match[1]) : 0
+    }
+
+    const latest = [...data]
+      .map((row) => row.signature_url)
+      .filter(Boolean)
+      .sort((a, b) => parseStampTime(b) - parseStampTime(a))[0]
+
+    setStampUrl(latest || null)
+  }
 
   useEffect(() => { loadAll() }, [])
 
@@ -85,6 +114,8 @@ export default function SignDocumentPage() {
         .from('user_signatures').select('id, signature_url')
         .eq('user_id', user.id).eq('is_active', true).maybeSingle()
       if (sig) { setSignatureUrl(sig.signature_url); setSignatureId(sig.id) }
+
+      await loadLatestStamp(user.id)
 
       // 4. ★ ดึง workflow ทั้งหมดของเอกสารนี้ เพื่อเช็คลำดับ
       const { data: allWf } = await supabase
@@ -231,6 +262,12 @@ export default function SignDocumentPage() {
       const verifyUrl = `${window.location.origin}/verify/${verificationCode}`
       const qrDataUrl = await QRCode.toDataURL(verifyUrl, { width: 100, margin: 1 })
 
+      let stampUint8: Uint8Array | null = null
+      if (includeStamp && stampUrl) {
+        const stampResp = await fetch(stampUrl)
+        stampUint8 = new Uint8Array(await stampResp.arrayBuffer())
+      }
+
       // ดึงรูปลายเซ็น
       const sigResp = await fetch(signatureUrl)
       const sigUint8 = new Uint8Array(await sigResp.arrayBuffer())
@@ -252,8 +289,26 @@ export default function SignDocumentPage() {
       try { sigImage = await pdfDoc.embedPng(sigUint8) }
       catch { sigImage = await pdfDoc.embedJpg(sigUint8) }
 
+      let stampImage: Awaited<ReturnType<typeof pdfDoc.embedPng>> | null = null
+      if (stampUint8) {
+        try { stampImage = await pdfDoc.embedPng(stampUint8) }
+        catch { stampImage = await pdfDoc.embedJpg(stampUint8) }
+      }
+
       const sigWidth = 150
       const sigHeight = (sigImage.height / sigImage.width) * sigWidth
+
+      if (stampImage) {
+        const stampWidth = 220
+        const stampHeight = (stampImage.height / stampImage.width) * stampWidth
+        targetPage.drawImage(stampImage, {
+          x: sigPosition.pdfX - stampWidth / 2,
+          y: sigPosition.pdfY - stampHeight / 2 + 10,
+          width: stampWidth,
+          height: stampHeight,
+          opacity: 0.2,
+        })
+      }
 
       targetPage.drawImage(sigImage, {
         x: sigPosition.pdfX - sigWidth / 2,
@@ -349,6 +404,7 @@ export default function SignDocumentPage() {
           verification_code: verificationCode,
           step_order: workflow.step_order,
           signed_file: signedFileName,
+          stamp_applied: Boolean(includeStamp && stampUrl),
         },
       })
 
@@ -448,21 +504,49 @@ export default function SignDocumentPage() {
           </div>
         )}
 
-        {!signatureUrl ? (
+        {!signatureUrl && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
             <p className="text-red-700 text-sm font-medium">⚠️ คุณยังไม่มีลายเซ็น</p>
             <button onClick={() => router.push('/dashboard/signature')} className="mt-2 px-3 py-1 bg-red-600 text-white rounded text-xs">อัปโหลดลายเซ็น</button>
           </div>
-        ) : canSign && !sigPosition ? (
+        )}
+
+        {signatureUrl && (
+          <div className="bg-white border rounded-lg p-3 mb-4">
+            <label className="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
+              <input
+                type="checkbox"
+                checked={includeStamp}
+                onChange={(e) => setIncludeStamp(e.target.checked)}
+                disabled={!stampUrl || processing}
+                className="h-4 w-4 rounded border-gray-300 text-rose-600 focus:ring-rose-500 disabled:opacity-50"
+              />
+              ใส่ตราปั้มในเอกสารนี้
+            </label>
+            {stampUrl ? (
+              <p className="text-xs text-gray-500 mt-1">สามารถเลือกได้ต่อเอกสารนี้เท่านั้น</p>
+            ) : (
+              <p className="text-xs text-amber-600 mt-1">ยังไม่มีไฟล์ตราปั้ม กรุณาอัปโหลดที่หน้า “จัดการลายเซ็น” ก่อน</p>
+            )}
+          </div>
+        )}
+
+        {signatureUrl && canSign && !sigPosition && (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
             <p className="text-blue-700 text-sm">👆 คลิกบนเอกสารตรงตำแหน่งที่ต้องการวางลายเซ็น</p>
           </div>
-        ) : canSign && sigPosition ? (
+        )}
+
+        {signatureUrl && canSign && sigPosition && (
           <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-4 flex justify-between items-center">
-            <p className="text-green-700 text-sm">✅ ลายเซ็น + QR Code จะถูกวางตรงจุดที่เลือก</p>
+            <p className="text-green-700 text-sm">
+              {includeStamp && stampUrl
+                ? '✅ ลายเซ็น + ตราปั้ม + QR Code จะถูกวางตรงจุดที่เลือก'
+                : '✅ ลายเซ็น + QR Code จะถูกวางตรงจุดที่เลือก'}
+            </p>
             <button onClick={() => setSigPosition(null)} className="text-xs text-green-600 hover:underline">เลือกใหม่</button>
           </div>
-        ) : null}
+        )}
 
         {message && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 flex justify-between items-center">
@@ -492,7 +576,15 @@ export default function SignDocumentPage() {
             {sigPosition && sigPosition.page === i && signatureUrl && canSign && (
               <div className="absolute pointer-events-none" style={{ left: sigPosition.x - 75, top: sigPosition.y - 30 }}>
                 <div className="flex items-start gap-2">
-                  <div>
+                  <div className="relative">
+                    {includeStamp && stampUrl && (
+                      <img
+                        src={stampUrl}
+                        alt="stamp-preview"
+                        className="absolute pointer-events-none"
+                        style={{ width: 220, opacity: 0.25, left: -35, top: -20 }}
+                      />
+                    )}
                     <img src={signatureUrl} alt="sig" className="border-2 border-green-400 border-dashed rounded bg-white/80" style={{ width: 150 }} />
                     <p className="text-xs mt-0.5">({profile?.full_name})</p>
                     <p className="text-gray-500" style={{ fontSize: 10 }}>{profile?.position}</p>

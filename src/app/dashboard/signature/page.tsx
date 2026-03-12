@@ -8,15 +8,22 @@ export default function SignaturePage() {
   const supabase = createClient()
   const router = useRouter()
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const stampCanvasRef = useRef<HTMLCanvasElement>(null)
   const drawCanvasRef = useRef<HTMLCanvasElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const stampInputRef = useRef<HTMLInputElement>(null)
 
   const [tab, setTab] = useState<'upload' | 'draw'>('upload')
   const [preview, setPreview] = useState<string | null>(null)
   const [processedPreview, setProcessedPreview] = useState<string | null>(null)
+  const [stampPreview, setStampPreview] = useState<string | null>(null)
+  const [processedStampPreview, setProcessedStampPreview] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [stampLoading, setStampLoading] = useState(false)
   const [message, setMessage] = useState('')
+  const [stampMessage, setStampMessage] = useState('')
   const [existingSignature, setExistingSignature] = useState<string | null>(null)
+  const [existingStamp, setExistingStamp] = useState<string | null>(null)
   const [isDrawing, setIsDrawing] = useState(false)
   const [hasDrawn, setHasDrawn] = useState(false)
 
@@ -97,49 +104,152 @@ export default function SignaturePage() {
       .select('signature_url')
       .eq('user_id', user.id)
       .eq('is_active', true)
-      .single()
+      .maybeSingle()
 
     if (data?.signature_url) {
       setExistingSignature(data.signature_url)
     }
+
+    await loadExistingStamp(user.id)
   }
 
-  function removeBackground(file: File): Promise<Blob> {
+  async function loadExistingStamp(userId: string) {
+    const cacheKey = `lubosawo_stamp_url_${userId}`
+    const cached = localStorage.getItem(cacheKey)
+    if (cached) setExistingStamp(cached)
+
+    const { data, error } = await supabase
+      .from('user_signatures')
+      .select('signature_url')
+      .eq('user_id', userId)
+      .like('signature_url', '%/stamp_%')
+      .limit(20)
+
+    if (error || !data?.length) return
+
+    const parseStampTime = (url: string) => {
+      const match = url.match(/stamp_(\d+)\.png/i)
+      return match ? Number(match[1]) : 0
+    }
+
+    const latest = [...data]
+      .map((row) => row.signature_url)
+      .filter(Boolean)
+      .sort((a, b) => parseStampTime(b) - parseStampTime(a))[0]
+
+    if (!latest) return
+    setExistingStamp(latest)
+    localStorage.setItem(cacheKey, latest)
+  }
+
+  function removeBackground(file: File, targetCanvas: HTMLCanvasElement | null): Promise<Blob> {
     return new Promise((resolve, reject) => {
       const img = new Image()
       img.onload = () => {
-        const canvas = canvasRef.current
+        const canvas = targetCanvas
         if (!canvas) return reject('No canvas')
 
         canvas.width = img.width
         canvas.height = img.height
-        const ctx = canvas.getContext('2d')
+        const ctx = canvas.getContext('2d', { willReadFrequently: true })
         if (!ctx) return reject('No context')
 
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
         ctx.drawImage(img, 0, 0)
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
         const data = imageData.data
+
+        let sumR = 0
+        let sumG = 0
+        let sumB = 0
+        let sampleCount = 0
+        const step = Math.max(1, Math.floor(Math.min(canvas.width, canvas.height) / 120))
+        const sampleEdge = (x: number, y: number) => {
+          const i = (y * canvas.width + x) * 4
+          if (data[i + 3] < 10) return
+          sumR += data[i]
+          sumG += data[i + 1]
+          sumB += data[i + 2]
+          sampleCount += 1
+        }
+
+        for (let x = 0; x < canvas.width; x += step) {
+          sampleEdge(x, 0)
+          sampleEdge(x, canvas.height - 1)
+        }
+        for (let y = 0; y < canvas.height; y += step) {
+          sampleEdge(0, y)
+          sampleEdge(canvas.width - 1, y)
+        }
+
+        const bgR = sampleCount > 0 ? sumR / sampleCount : 245
+        const bgG = sampleCount > 0 ? sumG / sampleCount : 245
+        const bgB = sampleCount > 0 ? sumB / sampleCount : 245
 
         for (let i = 0; i < data.length; i += 4) {
           const r = data[i]
           const g = data[i + 1]
           const b = data[i + 2]
+          const a = data[i + 3]
 
-          const isBlue = b > 80 && b > r * 1.3 && b > g * 1.2
+          if (a === 0) continue
 
-          if (isBlue) {
-            data[i] = Math.max(0, r - 30)
-            data[i + 1] = Math.max(0, g - 30)
-            data[i + 2] = Math.min(255, b + 20)
-            data[i + 3] = 255
-          } else {
-            data[i + 3] = 0
-          }
+          const dr = r - bgR
+          const dg = g - bgG
+          const db = b - bgB
+          const dist = Math.sqrt(dr * dr + dg * dg + db * db)
+          const maxCh = Math.max(r, g, b)
+          const minCh = Math.min(r, g, b)
+          const saturation = maxCh === 0 ? 0 : (maxCh - minCh) / maxCh
+          const nearWhite = r > 225 && g > 225 && b > 225 && saturation < 0.12
+
+          let alpha = a
+          if (dist < 30 || nearWhite) alpha = 0
+          else if (dist < 64) alpha = Math.round(a * ((dist - 30) / 34))
+          if (alpha < 16) alpha = 0
+          data[i + 3] = alpha
         }
 
         ctx.putImageData(imageData, 0, 0)
 
-        canvas.toBlob((blob) => {
+        const outCanvas = document.createElement('canvas')
+        const outCtx = outCanvas.getContext('2d')
+        if (!outCtx) return reject('No output context')
+        const outData = ctx.getImageData(0, 0, canvas.width, canvas.height).data
+
+        let minX = canvas.width
+        let minY = canvas.height
+        let maxX = -1
+        let maxY = -1
+
+        for (let y = 0; y < canvas.height; y += 1) {
+          for (let x = 0; x < canvas.width; x += 1) {
+            const alpha = outData[(y * canvas.width + x) * 4 + 3]
+            if (alpha <= 10) continue
+            if (x < minX) minX = x
+            if (x > maxX) maxX = x
+            if (y < minY) minY = y
+            if (y > maxY) maxY = y
+          }
+        }
+
+        if (maxX < 0 || maxY < 0) {
+          canvas.toBlob((blob) => {
+            if (blob) resolve(blob)
+            else reject('Cannot create blob')
+          }, 'image/png')
+          return
+        }
+
+        const pad = 10
+        const trimWidth = maxX - minX + 1
+        const trimHeight = maxY - minY + 1
+        outCanvas.width = trimWidth + pad * 2
+        outCanvas.height = trimHeight + pad * 2
+        outCtx.clearRect(0, 0, outCanvas.width, outCanvas.height)
+        outCtx.drawImage(canvas, minX, minY, trimWidth, trimHeight, pad, pad, trimWidth, trimHeight)
+
+        outCanvas.toBlob((blob) => {
           if (blob) resolve(blob)
           else reject('Cannot create blob')
         }, 'image/png')
@@ -158,12 +268,31 @@ export default function SignaturePage() {
     setMessage('กำลังตัดพื้นหลัง...')
 
     try {
-      const processedBlob = await removeBackground(file)
+      const processedBlob = await removeBackground(file, canvasRef.current)
       const processedUrl = URL.createObjectURL(processedBlob)
       setProcessedPreview(processedUrl)
       setMessage('ตัดพื้นหลังเสร็จแล้ว ตรวจสอบแล้วกดบันทึก')
     } catch (err) {
       setMessage('เกิดข้อผิดพลาดในการตัดพื้นหลัง')
+      console.error(err)
+    }
+  }
+
+  async function handleStampFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setStampPreview(URL.createObjectURL(file))
+    setProcessedStampPreview(null)
+    setStampMessage('Processing stamp image...')
+
+    try {
+      const processedBlob = await removeBackground(file, stampCanvasRef.current)
+      const processedUrl = URL.createObjectURL(processedBlob)
+      setProcessedStampPreview(processedUrl)
+      setStampMessage('Stamp ready. Review and save.')
+    } catch (err) {
+      setStampMessage('Failed to process stamp image')
       console.error(err)
     }
   }
@@ -227,10 +356,63 @@ export default function SignaturePage() {
       setPreview(null)
       setProcessedPreview(null)
       if (tab === 'draw') clearDraw()
-    } catch (err: any) {
-      setMessage(`❌ เกิดข้อผิดพลาด: ${err.message}`)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setMessage(`❌ เกิดข้อผิดพลาด: ${msg}`)
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function handleSaveStamp() {
+    setStampLoading(true)
+    setStampMessage('Saving stamp...')
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('User not found')
+
+      const canvas = stampCanvasRef.current
+      if (!canvas) throw new Error('Stamp canvas not found')
+
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((b) => (b ? resolve(b) : reject('Cannot create blob')), 'image/png')
+      })
+
+      const fileName = `${user.id}/stamp_${Date.now()}.png`
+
+      const { error: uploadError } = await supabase.storage
+        .from('signatures')
+        .upload(fileName, blob, {
+          contentType: 'image/png',
+          upsert: true,
+        })
+      if (uploadError) throw uploadError
+
+      const { data: urlData } = supabase.storage
+        .from('signatures')
+        .getPublicUrl(fileName)
+
+      const { error: dbError } = await supabase
+        .from('user_signatures')
+        .insert({
+          user_id: user.id,
+          signature_url: urlData.publicUrl,
+          is_active: false,
+        })
+      if (dbError) throw dbError
+
+      setExistingStamp(urlData.publicUrl)
+      localStorage.setItem(`lubosawo_stamp_url_${user.id}`, urlData.publicUrl)
+      setStampPreview(null)
+      setProcessedStampPreview(null)
+      setStampMessage('Stamp saved')
+      if (stampInputRef.current) stampInputRef.current.value = ''
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setStampMessage(`Failed to save stamp: ${msg}`)
+    } finally {
+      setStampLoading(false)
     }
   }
 
@@ -258,6 +440,70 @@ export default function SignaturePage() {
             </div>
           </div>
         )}
+
+        {existingStamp && (
+          <div className="bg-white rounded-lg shadow p-4 mb-6">
+            <h2 className="font-semibold mb-2">Current Stamp</h2>
+            <div
+              className="border rounded p-4 flex justify-center"
+              style={{ background: 'repeating-conic-gradient(#eee 0% 25%, #fff 0% 50%) 50% / 16px 16px' }}
+            >
+              <img src={existingStamp} alt="Current stamp" className="max-h-36 object-contain" />
+            </div>
+          </div>
+        )}
+
+        <div className="bg-white rounded-lg shadow p-4 mb-6">
+          <h2 className="font-semibold mb-2">Upload Stamp</h2>
+          <p className="text-sm text-gray-500 mb-3">
+            Upload stamp image. The app removes background automatically and saves transparent PNG.
+          </p>
+          <input
+            ref={stampInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/jpg"
+            onChange={handleStampFileSelect}
+            className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-rose-50 file:text-rose-700 hover:file:bg-rose-100"
+          />
+
+          {stampPreview && (
+            <div className="grid grid-cols-2 gap-4 mt-4">
+              <div className="bg-white rounded-lg border p-4">
+                <h3 className="text-sm font-semibold mb-2">Original</h3>
+                <img src={stampPreview} alt="Stamp original" className="max-h-40 object-contain mx-auto" />
+              </div>
+              <div className="bg-white rounded-lg border p-4">
+                <h3 className="text-sm font-semibold mb-2">Processed</h3>
+                {processedStampPreview ? (
+                  <img
+                    src={processedStampPreview}
+                    alt="Stamp processed"
+                    className="max-h-40 object-contain mx-auto"
+                    style={{ background: 'repeating-conic-gradient(#ddd 0% 25%, transparent 0% 50%) 50% / 16px 16px' }}
+                  />
+                ) : (
+                  <p className="text-gray-400 text-sm">Processing...</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          <canvas ref={stampCanvasRef} className="hidden" />
+
+          {processedStampPreview && (
+            <button
+              onClick={handleSaveStamp}
+              disabled={stampLoading}
+              className="w-full mt-4 bg-rose-600 text-white py-3 rounded-lg font-semibold hover:bg-rose-700 disabled:opacity-50"
+            >
+              {stampLoading ? 'Saving stamp...' : 'Save Stamp'}
+            </button>
+          )}
+
+          {stampMessage && (
+            <p className="text-center text-sm mt-3 font-medium">{stampMessage}</p>
+          )}
+        </div>
 
         {/* แท็บเลือก */}
         <div className="flex mb-4 bg-white rounded-lg shadow overflow-hidden">
