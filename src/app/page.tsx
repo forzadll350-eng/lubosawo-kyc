@@ -41,6 +41,8 @@ export default function LandingPage() {
       const m = authError.message.toLowerCase();
       if (m.includes("email not confirmed") || m.includes("email not verified")) {
         setError("กรุณายืนยันอีเมลก่อนเข้าสู่ระบบ");
+      } else if (m.includes("rate limit") || m.includes("email rate limit exceeded")) {
+        setError("ระบบจำกัดการส่งอีเมลชั่วคราว กรุณารอสักครู่แล้วลองใหม่ หรือใช้ปุ่มลืมรหัสผ่าน");
       } else if (m.includes("invalid login credentials")) {
         setError("อีเมลหรือรหัสผ่านไม่ถูกต้อง หากเคยสมัครอีเมลเดิมไว้แล้วให้กดลืมรหัสผ่าน");
       } else {
@@ -107,6 +109,8 @@ export default function LandingPage() {
       const m = signUpError.message.toLowerCase();
       if (m.includes("email not confirmed") || m.includes("email not verified")) {
         setError("กรุณายืนยันอีเมลก่อนเข้าสู่ระบบ");
+      } else if (m.includes("rate limit") || m.includes("email rate limit exceeded")) {
+        setError("ส่งอีเมลสมัครสมาชิกถี่เกินไป ระบบจำกัดชั่วคราว กรุณารอสักครู่แล้วลองอีกครั้ง");
       } else {
         setError(signUpError.message);
       }
@@ -145,7 +149,12 @@ export default function LandingPage() {
       });
 
       if (resetError) {
-        setError(resetError.message);
+        const m = resetError.message.toLowerCase();
+        if (m.includes("rate limit") || m.includes("email rate limit exceeded")) {
+          setError("ส่งอีเมลรีเซ็ตรหัสผ่านถี่เกินไป กรุณารอสักครู่แล้วลองใหม่");
+        } else {
+          setError(resetError.message);
+        }
         return;
       }
 
