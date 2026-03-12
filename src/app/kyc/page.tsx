@@ -135,31 +135,51 @@ export default function KYCPage() {
     setReadingCard(true);
 
     try {
-      const resp = await fetch("http://127.0.0.1:18080/read-thai-id", {
-        method: "POST",
-      });
+      const endpoints = [
+        "http://127.0.0.1:18080/read-thai-id",
+        "http://localhost:18080/read-thai-id",
+      ];
+      let payload: Record<string, string> | null = null;
+      let lastError = "";
 
-      if (!resp.ok) {
-        throw new Error("Card reader agent returned " + resp.status);
+      for (const endpoint of endpoints) {
+        try {
+          const resp = await fetch(endpoint, {
+            method: "POST",
+            cache: "no-store",
+          });
+          if (!resp.ok) {
+            const detail = await resp.text().catch(() => "");
+            throw new Error(`agent ${resp.status}${detail ? `: ${detail}` : ""}`);
+          }
+          payload = await resp.json();
+          break;
+        } catch (err: unknown) {
+          lastError = err instanceof Error ? err.message : String(err);
+        }
       }
 
-      const payload = await resp.json();
+      if (!payload) {
+        throw new Error(lastError || "cannot connect to local card reader agent");
+      }
+
       setOcrData((prev) => ({
         ...prev,
-        name_th: payload.name_th || prev.name_th,
-        name_en: payload.name_en || prev.name_en,
-        id_number: payload.id_number || prev.id_number,
-        dob: payload.dob || prev.dob,
-        expiry: payload.expiry || prev.expiry,
-        address: payload.address || prev.address,
+        name_th: (payload.name_th as string) || prev.name_th,
+        name_en: (payload.name_en as string) || prev.name_en,
+        id_number: (payload.id_number as string) || prev.id_number,
+        dob: (payload.dob as string) || prev.dob,
+        expiry: (payload.expiry as string) || prev.expiry,
+        address: (payload.address as string) || prev.address,
       }));
 
       setProofMethod((prev) => (prev || "thai_id_chip"));
       if (!proofReference) {
-        setProofReference(payload.reference_id || payload.tx_id || "chip-read-local");
+        setProofReference((payload.reference_id as string) || (payload.tx_id as string) || "chip-read-local");
       }
-    } catch {
-      setCardReadError("อ่านบัตรอัตโนมัติไม่สำเร็จ: ตรวจ local agent ที่พอร์ต 18080 หรือกรอกข้อมูลด้วยตนเอง");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "unknown error";
+      setCardReadError(`อ่านบัตรอัตโนมัติไม่สำเร็จ: ${msg}. ตรวจ local agent ที่พอร์ต 18080 หรือกรอกข้อมูลด้วยตนเอง`);
     } finally {
       setReadingCard(false);
     }
