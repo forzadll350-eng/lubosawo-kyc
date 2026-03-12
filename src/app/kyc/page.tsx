@@ -15,14 +15,17 @@ type OcrData = {
 };
 
 type ProofMethod = "thai_id_chip" | "external_idp" | "manual_offline";
+const REQUIRE_CHIP_READER = true;
 
 type CardReadProof = {
   id_number: string;
   name_th: string;
   name_en: string;
+  dob: string;
   read_at: string;
   reference_id: string;
   source: string;
+  chip_photo_present: boolean;
 };
 
 function digitsOnly(input: string) {
@@ -38,6 +41,24 @@ function isValidThaiCitizenId(input: string) {
   }
   const checkDigit = (11 - (sum % 11)) % 10;
   return checkDigit === Number(id[12]);
+}
+
+function normalizeNameForCompare(input: string) {
+  return (input || "")
+    .replace(/[.#]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeDateForCompare(input: string) {
+  const raw = (input || "").trim();
+  if (!raw) return "";
+  const m = raw.match(/^(\d{4})[-/](\d{2})[-/](\d{2})$/);
+  if (!m) return raw;
+  let y = Number(m[1]);
+  if (y > 2400) y -= 543;
+  return `${String(y).padStart(4, "0")}-${m[2]}-${m[3]}`;
 }
 
 export default function KYCPage() {
@@ -69,7 +90,7 @@ export default function KYCPage() {
     address: "",
   });
 
-  const [proofMethod, setProofMethod] = useState<ProofMethod | "">("");
+  const [proofMethod, setProofMethod] = useState<ProofMethod | "">(REQUIRE_CHIP_READER ? "thai_id_chip" : "");
   const [proofReference, setProofReference] = useState("");
   const [proofNote, setProofNote] = useState("");
   const [readingCard, setReadingCard] = useState(false);
@@ -192,6 +213,10 @@ export default function KYCPage() {
         throw new Error("การ์ดที่อ่านได้ไม่ใช่บัตรประชาชนไทย หรือเลขบัตรไม่ถูกต้อง");
       }
       const readAt = String(payload.read_at || new Date().toISOString());
+      const dob = normalizeDateForCompare(String(payload.dob || ""));
+      const chipPhotoPresent = Boolean((payload as Record<string, unknown>).chip_photo_present) ||
+        Boolean((payload as Record<string, unknown>).photo_base64) ||
+        Boolean(((payload as Record<string, unknown>).raw as { photo?: string } | undefined)?.photo);
       const refId = String(payload.reference_id || payload.tx_id || "chip-read-local");
 
       setOcrData((prev) => ({
@@ -199,7 +224,7 @@ export default function KYCPage() {
         name_th: (payload.name_th as string) || prev.name_th,
         name_en: (payload.name_en as string) || prev.name_en,
         id_number: cardId || prev.id_number,
-        dob: (payload.dob as string) || prev.dob,
+        dob: dob || prev.dob,
         expiry: (payload.expiry as string) || prev.expiry,
         address: (payload.address as string) || prev.address,
       }));
@@ -208,9 +233,11 @@ export default function KYCPage() {
         id_number: cardId,
         name_th: String(payload.name_th || ""),
         name_en: String(payload.name_en || ""),
+        dob,
         read_at: readAt,
         reference_id: refId,
         source: String(payload.source || "thai_id_chip"),
+        chip_photo_present: chipPhotoPresent,
       });
       setProofMethod("thai_id_chip");
       if (!proofReference) {
@@ -248,6 +275,11 @@ export default function KYCPage() {
       setStep(2);
       return;
     }
+    if (REQUIRE_CHIP_READER && proofMethod !== "thai_id_chip") {
+      alert("ระบบนี้บังคับใช้การอ่านบัตรประชาชนจากชิป (Thai ID Chip Reader)");
+      setStep(2);
+      return;
+    }
     if (proofMethod === "thai_id_chip" && !cardReadProof) {
       alert("เลือก Thai ID Chip Reader แล้ว ต้องกดอ่านบัตรจากเครื่องอ่านให้สำเร็จก่อน");
       setStep(2);
@@ -260,8 +292,22 @@ export default function KYCPage() {
         setStep(2);
         return;
       }
-      if (digitsOnly(cardReadProof?.id_number || "") !== formId) {
-        alert("เลขบัตรจากเครื่องอ่านไม่ตรงกับข้อมูลที่กรอก จึงยังส่ง KYC ไม่ได้");
+      const chipId = digitsOnly(cardReadProof?.id_number || "");
+      const idMatch = chipId === formId;
+      const nameMatch =
+        normalizeNameForCompare(cardReadProof?.name_th || "") ===
+        normalizeNameForCompare(ocrData.name_th || "");
+      const dobMatch =
+        normalizeDateForCompare(cardReadProof?.dob || "") ===
+        normalizeDateForCompare(ocrData.dob || "");
+
+      if (!idMatch || !nameMatch || !dobMatch) {
+        alert("ข้อมูลที่รวบรวมได้ไม่ตรงกับข้อมูลจากชิปบัตร (เลขบัตร/ชื่อ/วันเกิด) จึงยังส่ง KYC ไม่ได้");
+        setStep(2);
+        return;
+      }
+      if (!cardReadProof?.chip_photo_present) {
+        alert("อ่านชิปสำเร็จแต่ไม่พบภาพใบหน้าจากชิปบัตร จึงยังไม่ผ่านเงื่อนไข IAL 2.1");
         setStep(2);
         return;
       }
@@ -309,6 +355,20 @@ export default function KYCPage() {
           proofMethod === "thai_id_chip"
             ? digitsOnly(ocrData.id_number).slice(-4)
             : null,
+        chip_name_match:
+          proofMethod === "thai_id_chip"
+            ? normalizeNameForCompare(cardReadProof?.name_th || "") === normalizeNameForCompare(ocrData.name_th)
+            : null,
+        chip_dob_match:
+          proofMethod === "thai_id_chip"
+            ? normalizeDateForCompare(cardReadProof?.dob || "") === normalizeDateForCompare(ocrData.dob)
+            : null,
+        chip_photo_present:
+          proofMethod === "thai_id_chip"
+            ? Boolean(cardReadProof?.chip_photo_present)
+            : null,
+        contact_channel_verified: Boolean(user.email_confirmed_at),
+        contact_channel_type: "email_otp_or_link",
       };
 
       const { error: insertError } = await supabase.from("kyc_submissions").insert({
@@ -339,7 +399,7 @@ export default function KYCPage() {
       ocrData.id_number.trim() &&
       proofMethod &&
       proofReference.trim() &&
-      (proofMethod !== "thai_id_chip" || cardReadProof)
+      (proofMethod !== "thai_id_chip" || (cardReadProof && cardReadProof.chip_photo_present))
   );
 
   return (
@@ -472,7 +532,7 @@ export default function KYCPage() {
 
               <div className="rounded-xl border border-gray-200 p-4 mb-5">
                 <div className="flex items-center justify-between gap-3 mb-3">
-                  <p className="text-xs font-bold text-navy">อ่านข้อมูลจากเครื่องอ่านบัตร (Optional)</p>
+                  <p className="text-xs font-bold text-navy">อ่านข้อมูลจากเครื่องอ่านบัตร {REQUIRE_CHIP_READER ? "(Required)" : "(Optional)"}</p>
                   <button onClick={readThaiIdFromLocalAgent} disabled={readingCard} className="px-3 py-1.5 bg-navy text-white rounded-md text-xs font-semibold disabled:opacity-60 border-none cursor-pointer">
                     {readingCard ? "กำลังอ่าน..." : "อ่านจาก Card Reader"}
                   </button>
@@ -480,7 +540,7 @@ export default function KYCPage() {
                 {cardReadError && <p className="text-xs text-status-red">{cardReadError}</p>}
                 {cardReadProof && (
                   <p className="text-xs text-status-green font-semibold mt-1">
-                    ✅ อ่านบัตรสำเร็จ (Ref: {cardReadProof.reference_id}, เลขท้าย {cardReadProof.id_number.slice(-4)})
+                    ✅ อ่านบัตรสำเร็จ (Ref: {cardReadProof.reference_id}, เลขท้าย {cardReadProof.id_number.slice(-4)}, chip photo: {cardReadProof.chip_photo_present ? "found" : "missing"})
                   </p>
                 )}
               </div>
@@ -488,11 +548,11 @@ export default function KYCPage() {
               <div className="grid grid-cols-2 gap-3 mb-5">
                 <div>
                   <label className="text-[11px] text-gray-500 font-semibold block mb-1">Proof Source <span className="text-status-red">*</span></label>
-                  <select value={proofMethod} onChange={(e) => setProofMethod(e.target.value as ProofMethod)} className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm outline-none focus:border-navy-3">
-                    <option value="">-- เลือกแหล่งยืนยัน --</option>
+                  <select value={proofMethod} onChange={(e) => setProofMethod(e.target.value as ProofMethod)} className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm outline-none focus:border-navy-3" disabled={REQUIRE_CHIP_READER}>
+                    {!REQUIRE_CHIP_READER && <option value="">-- เลือกแหล่งยืนยัน --</option>}
                     <option value="thai_id_chip">Thai ID Chip Reader</option>
-                    <option value="external_idp">External IdP / NDID</option>
-                    <option value="manual_offline">Manual Offline Verification</option>
+                    {!REQUIRE_CHIP_READER && <option value="external_idp">External IdP / NDID</option>}
+                    {!REQUIRE_CHIP_READER && <option value="manual_offline">Manual Offline Verification</option>}
                   </select>
                 </div>
                 <div>
@@ -544,6 +604,10 @@ export default function KYCPage() {
                   <strong>Proof Source:</strong> {proofMethod || "-"}
                   <br />
                   <strong>Proof Reference:</strong> {proofReference || "-"}
+                  <br />
+                  <strong>Chip Read:</strong> {cardReadProof ? "Yes" : "No"}
+                  <br />
+                  <strong>Chip Photo:</strong> {cardReadProof?.chip_photo_present ? "Found" : "Missing"}
                   <br />
                   <strong>Email Verified:</strong> {isEmailVerified ? "Yes" : "No"}
                 </p>

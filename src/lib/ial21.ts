@@ -1,6 +1,11 @@
 type Ial21Submission = {
   evidence_method?: string | null;
   evidence_reference?: string | null;
+  chip_read_verified?: boolean | null;
+  chip_id_match?: boolean | null;
+  chip_name_match?: boolean | null;
+  chip_dob_match?: boolean | null;
+  chip_photo_present?: boolean | null;
 };
 
 type Ial21Review = {
@@ -45,6 +50,27 @@ export function evaluateIal21Access(
     return {
       allowed: false,
       reason: "ยังไม่มีหลักฐาน IAL2.1 (Proof Source / Proof Reference)",
+    };
+  }
+
+  if (submission.evidence_method !== "thai_id_chip") {
+    return {
+      allowed: false,
+      reason: "ระบบนี้กำหนดให้ใช้การยืนยันผ่าน Thai ID Chip Reader เท่านั้น",
+    };
+  }
+
+  const chipEvidenceOk =
+    Boolean(submission.chip_read_verified) &&
+    Boolean(submission.chip_id_match) &&
+    Boolean(submission.chip_name_match) &&
+    Boolean(submission.chip_dob_match) &&
+    Boolean(submission.chip_photo_present);
+
+  if (!chipEvidenceOk) {
+    return {
+      allowed: false,
+      reason: "หลักฐานจากชิปบัตรยังไม่ครบถ้วน (read/id/name/dob/photo)",
     };
   }
 

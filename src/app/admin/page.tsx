@@ -68,6 +68,18 @@ export default function AdminDashboard() {
       setReviewError("ยังไม่มีหลักฐานอ้างอิง IAL 2.1 (Proof Source / Proof Reference)");
       return;
     }
+    if (ialSubmission?.evidence_method !== "thai_id_chip") {
+      setReviewError("ระบบนี้กำหนดให้ใช้หลักฐานจาก Thai ID Chip Reader เท่านั้น");
+      return;
+    }
+    if (!ialSubmission?.chip_read_verified || !ialSubmission?.chip_id_match || !ialSubmission?.chip_name_match || !ialSubmission?.chip_dob_match) {
+      setReviewError("ผลเทียบข้อมูลจากชิปบัตรยังไม่ครบถ้วนหรือไม่ผ่าน");
+      return;
+    }
+    if (!ialSubmission?.chip_photo_present) {
+      setReviewError("ไม่พบภาพใบหน้าจากชิปบัตร จึงยังอนุมัติ IAL 2.1 ไม่ได้");
+      return;
+    }
 
     const allChecked = ialChecklist.evidenceSourceChecked && ialChecklist.faceMatchChecked && ialChecklist.dataConsistencyChecked;
     if (!allChecked) {
@@ -173,8 +185,16 @@ export default function AdminDashboard() {
   ];
   const currentIalSubmission = getIalSubmission(reviewModal);
   const hasIalEvidence = Boolean(currentIalSubmission?.evidence_method && currentIalSubmission?.evidence_reference);
+  const chipMethod = currentIalSubmission?.evidence_method === "thai_id_chip";
+  const chipReadVerified = Boolean(currentIalSubmission?.chip_read_verified);
+  const chipIdMatch = Boolean(currentIalSubmission?.chip_id_match);
+  const chipNameMatch = Boolean(currentIalSubmission?.chip_name_match);
+  const chipDobMatch = Boolean(currentIalSubmission?.chip_dob_match);
+  const chipPhotoPresent = Boolean(currentIalSubmission?.chip_photo_present);
+  const chipEvidenceOk = !chipMethod || (chipReadVerified && chipIdMatch && chipNameMatch && chipDobMatch && chipPhotoPresent);
   const canApprove =
     hasIalEvidence &&
+    chipEvidenceOk &&
     ialChecklist.evidenceSourceChecked &&
     ialChecklist.faceMatchChecked &&
     ialChecklist.dataConsistencyChecked;
@@ -291,6 +311,11 @@ export default function AdminDashboard() {
                   <div><label className="text-[10px] text-gray-500 font-semibold block mb-0.5">Proof Reference</label><span className="text-[13px] font-semibold text-navy">{currentIalSubmission?.evidence_reference || "-"}</span></div>
                   <div><label className="text-[10px] text-gray-500 font-semibold block mb-0.5">Email Confirmed At</label><span className="text-[13px] font-semibold text-navy">{currentIalSubmission?.email_confirmed_at ? new Date(currentIalSubmission.email_confirmed_at).toLocaleString("th-TH") : "-"}</span></div>
                   <div><label className="text-[10px] text-gray-500 font-semibold block mb-0.5">ระดับ</label><span className="text-[13px] font-semibold text-navy">{currentIalSubmission?.level || "IAL2.1"}</span></div>
+                  <div><label className="text-[10px] text-gray-500 font-semibold block mb-0.5">Chip Read Verified</label><span className="text-[13px] font-semibold text-navy">{chipReadVerified ? "ผ่าน" : "ไม่ผ่าน"}</span></div>
+                  <div><label className="text-[10px] text-gray-500 font-semibold block mb-0.5">Chip ID Match</label><span className="text-[13px] font-semibold text-navy">{chipIdMatch ? "ตรง" : "ไม่ตรง"}</span></div>
+                  <div><label className="text-[10px] text-gray-500 font-semibold block mb-0.5">Chip Name Match</label><span className="text-[13px] font-semibold text-navy">{chipNameMatch ? "ตรง" : "ไม่ตรง"}</span></div>
+                  <div><label className="text-[10px] text-gray-500 font-semibold block mb-0.5">Chip DOB Match</label><span className="text-[13px] font-semibold text-navy">{chipDobMatch ? "ตรง" : "ไม่ตรง"}</span></div>
+                  <div><label className="text-[10px] text-gray-500 font-semibold block mb-0.5">Chip Photo</label><span className="text-[13px] font-semibold text-navy">{chipPhotoPresent ? "พบภาพจากชิป" : "ไม่พบภาพจากชิป"}</span></div>
                 </div>
               </div>
               {reviewModal.ocr_data && Object.values(reviewModal.ocr_data).some((v: unknown) => v) && (
@@ -324,13 +349,15 @@ export default function AdminDashboard() {
                   </label>
                   <label className="flex items-center gap-2 text-xs text-gray-700 mb-2">
                     <input type="checkbox" checked={ialChecklist.faceMatchChecked} onChange={(e)=>setIalChecklist({ ...ialChecklist, faceMatchChecked: e.target.checked })} />
-                    เปรียบเทียบใบหน้ากับบัตร/หลักฐานแล้ว
+                    เปรียบเทียบใบหน้า Selfie กับภาพจากชิปบัตรแล้ว (Visual Comparison)
                   </label>
                   <label className="flex items-center gap-2 text-xs text-gray-700">
                     <input type="checkbox" checked={ialChecklist.dataConsistencyChecked} onChange={(e)=>setIalChecklist({ ...ialChecklist, dataConsistencyChecked: e.target.checked })} />
                     ตรวจสอบความสอดคล้องข้อมูลทั้งหมดแล้ว
                   </label>
                   {!hasIalEvidence && <p className="mt-2 text-xs text-status-red font-semibold">ไม่สามารถอนุมัติได้: ยังไม่มีข้อมูล Proof Source/Reference ใน submission</p>}
+                  {!chipMethod && <p className="mt-2 text-xs text-status-red font-semibold">ไม่สามารถอนุมัติได้: ต้องใช้ Proof Source = thai_id_chip</p>}
+                  {chipMethod && !chipEvidenceOk && <p className="mt-2 text-xs text-status-red font-semibold">ไม่สามารถอนุมัติได้: หลักฐานจากชิปบัตรยังไม่ครบ (read/id/name/dob/photo)</p>}
                 </div>
                 <div className="flex gap-2.5 items-end">
                   <textarea value={rejectReason} onChange={(e)=>setRejectReason(e.target.value)} placeholder="เหตุผลในการปฏิเสธ (ถ้ามี)" className="flex-1 px-3 py-2.5 border-[1.5px] border-gray-200 rounded-lg text-[13px] resize-none h-[70px] outline-none focus:border-navy-3"/>

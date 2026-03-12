@@ -173,6 +173,9 @@ export default function UserDashboard() {
   const chipReadVerified = Boolean(ial21Submission?.chip_read_verified);
   const chipReadAt = ial21Submission?.chip_read_at ? new Date(ial21Submission.chip_read_at).toLocaleString("th-TH") : "-";
   const chipMethodSelected = ial21Submission?.evidence_method === "thai_id_chip";
+  const chipNameMatch = Boolean(ial21Submission?.chip_name_match);
+  const chipDobMatch = Boolean(ial21Submission?.chip_dob_match);
+  const chipPhotoPresent = Boolean(ial21Submission?.chip_photo_present);
   const ial21Reviewed = Boolean(
     ial21Review?.evidence_source_checked &&
     ial21Review?.face_match_checked &&
@@ -374,6 +377,9 @@ export default function UserDashboard() {
                 ["Proof Ref", ial21Submission?.evidence_reference || "-"],
                 ["อ่านชิปบัตร", chipMethodSelected ? (chipReadVerified ? "ผ่าน" : "ไม่ผ่าน/ไม่พบหลักฐาน") : "-"],
                 ["เวลาอ่านชิป", chipMethodSelected ? chipReadAt : "-"],
+                ["เทียบชื่อกับชิป", chipMethodSelected ? (chipNameMatch ? "ตรง" : "ไม่ตรง") : "-"],
+                ["เทียบวันเกิดกับชิป", chipMethodSelected ? (chipDobMatch ? "ตรง" : "ไม่ตรง") : "-"],
+                ["ภาพใบหน้าจากชิป", chipMethodSelected ? (chipPhotoPresent ? "พบ" : "ไม่พบ") : "-"],
                 ["สถานะ KYC", null],
                 ["วันที่ส่ง", kycDate ? new Date(kycDate).toLocaleDateString("th-TH") : "-"],
               ].map(([k, v], i) => (
