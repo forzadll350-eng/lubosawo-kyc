@@ -6,6 +6,9 @@ type Ial21Submission = {
   chip_name_match?: boolean | null;
   chip_dob_match?: boolean | null;
   chip_photo_present?: boolean | null;
+  chip_photo_url?: string | null;
+  contact_channel_verified?: boolean | null;
+  contact_verified_at?: string | null;
 };
 
 type Ial21Review = {
@@ -65,12 +68,20 @@ export function evaluateIal21Access(
     Boolean(submission.chip_id_match) &&
     Boolean(submission.chip_name_match) &&
     Boolean(submission.chip_dob_match) &&
-    Boolean(submission.chip_photo_present);
+    Boolean(submission.chip_photo_present) &&
+    Boolean(submission.chip_photo_url);
 
   if (!chipEvidenceOk) {
     return {
       allowed: false,
-      reason: "หลักฐานจากชิปบัตรยังไม่ครบถ้วน (read/id/name/dob/photo)",
+      reason: "หลักฐานจากชิปบัตรยังไม่ครบถ้วน (read/id/name/dob/photo/url)",
+    };
+  }
+
+  if (!submission.contact_channel_verified || !submission.contact_verified_at) {
+    return {
+      allowed: false,
+      reason: "ยังไม่มีหลักฐานยืนยันช่องทางติดต่อ (email/otp verification)",
     };
   }
 

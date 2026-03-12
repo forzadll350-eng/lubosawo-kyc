@@ -80,6 +80,14 @@ export default function AdminDashboard() {
       setReviewError("ไม่พบภาพใบหน้าจากชิปบัตร จึงยังอนุมัติ IAL 2.1 ไม่ได้");
       return;
     }
+    if (!ialSubmission?.chip_photo_url) {
+      setReviewError("ยังไม่มีไฟล์ภาพใบหน้าจากชิปบัตรในหลักฐาน KYC");
+      return;
+    }
+    if (!ialSubmission?.contact_channel_verified || !ialSubmission?.contact_verified_at) {
+      setReviewError("ยังไม่มีหลักฐานยืนยันช่องทางติดต่อ (email/otp)");
+      return;
+    }
 
     const allChecked = ialChecklist.evidenceSourceChecked && ialChecklist.faceMatchChecked && ialChecklist.dataConsistencyChecked;
     if (!allChecked) {
@@ -191,10 +199,15 @@ export default function AdminDashboard() {
   const chipNameMatch = Boolean(currentIalSubmission?.chip_name_match);
   const chipDobMatch = Boolean(currentIalSubmission?.chip_dob_match);
   const chipPhotoPresent = Boolean(currentIalSubmission?.chip_photo_present);
-  const chipEvidenceOk = !chipMethod || (chipReadVerified && chipIdMatch && chipNameMatch && chipDobMatch && chipPhotoPresent);
+  const chipPhotoUrl = typeof currentIalSubmission?.chip_photo_url === "string" ? currentIalSubmission.chip_photo_url : "";
+  const contactChannelVerified = Boolean(currentIalSubmission?.contact_channel_verified);
+  const contactVerifiedAt = currentIalSubmission?.contact_verified_at ? new Date(currentIalSubmission.contact_verified_at).toLocaleString("th-TH") : "";
+  const chipEvidenceOk = !chipMethod || (chipReadVerified && chipIdMatch && chipNameMatch && chipDobMatch && chipPhotoPresent && Boolean(chipPhotoUrl));
   const canApprove =
     hasIalEvidence &&
     chipEvidenceOk &&
+    contactChannelVerified &&
+    Boolean(contactVerifiedAt) &&
     ialChecklist.evidenceSourceChecked &&
     ialChecklist.faceMatchChecked &&
     ialChecklist.dataConsistencyChecked;
@@ -301,6 +314,10 @@ export default function AdminDashboard() {
                   <div className="rounded-[10px] border-2 border-gray-200 bg-gray-100 aspect-[4/3] flex items-center justify-center overflow-hidden">
                     {reviewModal.selfie_url ? <img src={reviewModal.selfie_url} className="w-full h-full object-cover" alt="Selfie" /> : <span className="text-[40px]">📸</span>}
                   </div>
+                  <h4 className="text-[13px] font-bold text-navy mb-3 pb-2 border-b border-gray-200 mt-4">🧬 ภาพใบหน้าจากชิปบัตร</h4>
+                  <div className="rounded-[10px] border-2 border-gray-200 bg-gray-100 aspect-[4/3] flex items-center justify-center overflow-hidden">
+                    {chipPhotoUrl ? <img src={chipPhotoUrl} className="w-full h-full object-cover" alt="Chip Face" /> : <span className="text-[12px] text-gray-500">ไม่พบภาพจากชิป</span>}
+                  </div>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-2 mb-4">{([["ชื่อ",reviewModal.user_profiles?.full_name||"-"],["อีเมล",reviewModal.user_profiles?.email||"-"],["เบอร์โทร",reviewModal.user_profiles?.phone||"-"],["วันที่ส่ง",new Date(reviewModal.created_at).toLocaleDateString("th-TH")]] as [string, string][]).map(([k,v],i)=><div key={i} className="p-1"><label className="text-[10px] text-gray-400 font-semibold block mb-0.5">{k}</label><span className="text-[13px] text-navy font-semibold">{v}</span></div>)}</div>
@@ -316,6 +333,9 @@ export default function AdminDashboard() {
                   <div><label className="text-[10px] text-gray-500 font-semibold block mb-0.5">Chip Name Match</label><span className="text-[13px] font-semibold text-navy">{chipNameMatch ? "ตรง" : "ไม่ตรง"}</span></div>
                   <div><label className="text-[10px] text-gray-500 font-semibold block mb-0.5">Chip DOB Match</label><span className="text-[13px] font-semibold text-navy">{chipDobMatch ? "ตรง" : "ไม่ตรง"}</span></div>
                   <div><label className="text-[10px] text-gray-500 font-semibold block mb-0.5">Chip Photo</label><span className="text-[13px] font-semibold text-navy">{chipPhotoPresent ? "พบภาพจากชิป" : "ไม่พบภาพจากชิป"}</span></div>
+                  <div><label className="text-[10px] text-gray-500 font-semibold block mb-0.5">Contact Verified</label><span className="text-[13px] font-semibold text-navy">{contactChannelVerified ? "ยืนยันแล้ว" : "ยังไม่ยืนยัน"}</span></div>
+                  <div><label className="text-[10px] text-gray-500 font-semibold block mb-0.5">Contact Verified At</label><span className="text-[13px] font-semibold text-navy">{contactVerifiedAt || "-"}</span></div>
+                  <div className="col-span-2"><label className="text-[10px] text-gray-500 font-semibold block mb-0.5">Chip Photo URL</label><span className="text-[12px] font-semibold text-navy break-all">{chipPhotoUrl || "-"}</span></div>
                 </div>
               </div>
               {reviewModal.ocr_data && Object.values(reviewModal.ocr_data).some((v: unknown) => v) && (
@@ -357,7 +377,8 @@ export default function AdminDashboard() {
                   </label>
                   {!hasIalEvidence && <p className="mt-2 text-xs text-status-red font-semibold">ไม่สามารถอนุมัติได้: ยังไม่มีข้อมูล Proof Source/Reference ใน submission</p>}
                   {!chipMethod && <p className="mt-2 text-xs text-status-red font-semibold">ไม่สามารถอนุมัติได้: ต้องใช้ Proof Source = thai_id_chip</p>}
-                  {chipMethod && !chipEvidenceOk && <p className="mt-2 text-xs text-status-red font-semibold">ไม่สามารถอนุมัติได้: หลักฐานจากชิปบัตรยังไม่ครบ (read/id/name/dob/photo)</p>}
+                  {chipMethod && !chipEvidenceOk && <p className="mt-2 text-xs text-status-red font-semibold">ไม่สามารถอนุมัติได้: หลักฐานจากชิปบัตรยังไม่ครบ (read/id/name/dob/photo/url)</p>}
+                  {!contactChannelVerified && <p className="mt-2 text-xs text-status-red font-semibold">ไม่สามารถอนุมัติได้: ยังไม่ยืนยันช่องทางติดต่อ</p>}
                 </div>
                 <div className="flex gap-2.5 items-end">
                   <textarea value={rejectReason} onChange={(e)=>setRejectReason(e.target.value)} placeholder="เหตุผลในการปฏิเสธ (ถ้ามี)" className="flex-1 px-3 py-2.5 border-[1.5px] border-gray-200 rounded-lg text-[13px] resize-none h-[70px] outline-none focus:border-navy-3"/>

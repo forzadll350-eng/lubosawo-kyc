@@ -17,6 +17,9 @@ alter table public.kyc_submissions
       and lower(coalesce(ocr_data->'ial21_submission'->>'chip_name_match', 'false')) = 'true'
       and lower(coalesce(ocr_data->'ial21_submission'->>'chip_dob_match', 'false')) = 'true'
       and lower(coalesce(ocr_data->'ial21_submission'->>'chip_photo_present', 'false')) = 'true'
+      and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'chip_photo_url', '')), '') is not null
+      and lower(coalesce(ocr_data->'ial21_submission'->>'contact_channel_verified', 'false')) = 'true'
+      and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'contact_verified_at', '')), '') is not null
       and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'chip_read_at', '')), '') is not null
       and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'evidence_reference', '')), '') is not null
     )
@@ -38,6 +41,9 @@ with check (
     and lower(coalesce(ocr_data->'ial21_submission'->>'chip_name_match', 'false')) = 'true'
     and lower(coalesce(ocr_data->'ial21_submission'->>'chip_dob_match', 'false')) = 'true'
     and lower(coalesce(ocr_data->'ial21_submission'->>'chip_photo_present', 'false')) = 'true'
+    and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'chip_photo_url', '')), '') is not null
+    and lower(coalesce(ocr_data->'ial21_submission'->>'contact_channel_verified', 'false')) = 'true'
+    and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'contact_verified_at', '')), '') is not null
     and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'chip_read_at', '')), '') is not null
     and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'evidence_reference', '')), '') is not null
   )
@@ -61,6 +67,9 @@ with check (
       and lower(coalesce(ocr_data->'ial21_submission'->>'chip_name_match', 'false')) = 'true'
       and lower(coalesce(ocr_data->'ial21_submission'->>'chip_dob_match', 'false')) = 'true'
       and lower(coalesce(ocr_data->'ial21_submission'->>'chip_photo_present', 'false')) = 'true'
+      and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'chip_photo_url', '')), '') is not null
+      and lower(coalesce(ocr_data->'ial21_submission'->>'contact_channel_verified', 'false')) = 'true'
+      and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'contact_verified_at', '')), '') is not null
       and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'chip_read_at', '')), '') is not null
       and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'evidence_reference', '')), '') is not null
     )

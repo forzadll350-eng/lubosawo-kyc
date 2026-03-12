@@ -176,6 +176,11 @@ export default function UserDashboard() {
   const chipNameMatch = Boolean(ial21Submission?.chip_name_match);
   const chipDobMatch = Boolean(ial21Submission?.chip_dob_match);
   const chipPhotoPresent = Boolean(ial21Submission?.chip_photo_present);
+  const chipPhotoUrl = ial21Submission?.chip_photo_url || "";
+  const contactChannelVerified = Boolean(ial21Submission?.contact_channel_verified);
+  const contactVerifiedAt = ial21Submission?.contact_verified_at
+    ? new Date(ial21Submission.contact_verified_at).toLocaleString("th-TH")
+    : "-";
   const ial21Reviewed = Boolean(
     ial21Review?.evidence_source_checked &&
     ial21Review?.face_match_checked &&
@@ -380,6 +385,9 @@ export default function UserDashboard() {
                 ["เทียบชื่อกับชิป", chipMethodSelected ? (chipNameMatch ? "ตรง" : "ไม่ตรง") : "-"],
                 ["เทียบวันเกิดกับชิป", chipMethodSelected ? (chipDobMatch ? "ตรง" : "ไม่ตรง") : "-"],
                 ["ภาพใบหน้าจากชิป", chipMethodSelected ? (chipPhotoPresent ? "พบ" : "ไม่พบ") : "-"],
+                ["หลักฐานรูปจากชิป", chipMethodSelected ? (chipPhotoUrl ? "มีไฟล์หลักฐาน" : "ไม่มีไฟล์หลักฐาน") : "-"],
+                ["ยืนยันช่องทางติดต่อ", contactChannelVerified ? "ยืนยันแล้ว" : "ยังไม่ยืนยัน"],
+                ["เวลายืนยันช่องทาง", contactVerifiedAt],
                 ["สถานะ KYC", null],
                 ["วันที่ส่ง", kycDate ? new Date(kycDate).toLocaleDateString("th-TH") : "-"],
               ].map(([k, v], i) => (

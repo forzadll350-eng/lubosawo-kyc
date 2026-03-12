@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, type ChangeEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
+import { logAudit } from "@/lib/audit";
 
 type OcrData = {
   name_th: string;
@@ -26,6 +27,7 @@ type CardReadProof = {
   reference_id: string;
   source: string;
   chip_photo_present: boolean;
+  photo_base64: string;
 };
 
 function digitsOnly(input: string) {
@@ -185,7 +187,7 @@ export default function KYCPage() {
         "http://127.0.0.1:18080/read-thai-id",
         "http://localhost:18080/read-thai-id",
       ];
-      let payload: Record<string, string> | null = null;
+      let payload: Record<string, unknown> | null = null;
       let lastError = "";
 
       for (const endpoint of endpoints) {
@@ -214,9 +216,13 @@ export default function KYCPage() {
       }
       const readAt = String(payload.read_at || new Date().toISOString());
       const dob = normalizeDateForCompare(String(payload.dob || ""));
+      const photoBase64 = String(
+        (payload as Record<string, unknown>).photo_base64 ||
+        ((payload as Record<string, unknown>).raw as { photo?: string } | undefined)?.photo ||
+        ""
+      );
       const chipPhotoPresent = Boolean((payload as Record<string, unknown>).chip_photo_present) ||
-        Boolean((payload as Record<string, unknown>).photo_base64) ||
-        Boolean(((payload as Record<string, unknown>).raw as { photo?: string } | undefined)?.photo);
+        Boolean(photoBase64);
       const refId = String(payload.reference_id || payload.tx_id || "chip-read-local");
 
       setOcrData((prev) => ({
@@ -238,6 +244,7 @@ export default function KYCPage() {
         reference_id: refId,
         source: String(payload.source || "thai_id_chip"),
         chip_photo_present: chipPhotoPresent,
+        photo_base64: photoBase64,
       });
       setProofMethod("thai_id_chip");
       if (!proofReference) {
@@ -318,6 +325,7 @@ export default function KYCPage() {
       let frontUrl = "";
       let backUrl = "";
       let selfieUrl = "";
+      let chipPhotoUrl = "";
 
       if (frontFile) {
         const ext = frontFile.name.split(".").pop() || "jpg";
@@ -332,6 +340,11 @@ export default function KYCPage() {
       if (selfieData) {
         const blob = await (await fetch(selfieData)).blob();
         selfieUrl = await uploadKycFile(user.id + "/selfie.jpg", blob, "image/jpeg");
+      }
+      if (proofMethod === "thai_id_chip" && cardReadProof?.photo_base64) {
+        const chipDataUrl = `data:image/jpeg;base64,${cardReadProof.photo_base64}`;
+        const chipBlob = await (await fetch(chipDataUrl)).blob();
+        chipPhotoUrl = await uploadKycFile(user.id + "/chip_face.jpg", chipBlob, "image/jpeg");
       }
 
       const ial21Submission = {
@@ -367,11 +380,17 @@ export default function KYCPage() {
           proofMethod === "thai_id_chip"
             ? Boolean(cardReadProof?.chip_photo_present)
             : null,
+        chip_photo_url:
+          proofMethod === "thai_id_chip"
+            ? chipPhotoUrl || null
+            : null,
         contact_channel_verified: Boolean(user.email_confirmed_at),
         contact_channel_type: "email_otp_or_link",
+        contact_verified_at: user.email_confirmed_at || null,
+        contact_channel_ref: user.email || null,
       };
 
-      const { error: insertError } = await supabase.from("kyc_submissions").insert({
+      const { data: inserted, error: insertError } = await supabase.from("kyc_submissions").insert({
         user_id: user.id,
         status: "pending",
         id_card_front_url: frontUrl,
@@ -381,9 +400,30 @@ export default function KYCPage() {
           ...ocrData,
           ial21_submission: ial21Submission,
         },
-      });
+      }).select("id").single();
 
       if (insertError) throw insertError;
+
+      const submissionId = inserted?.id as string | undefined;
+      if (submissionId) {
+        try {
+          await logAudit(supabase, "kyc.submit", "kyc", submissionId, {
+            proof_source: proofMethod,
+            proof_reference: proofReference.trim(),
+            chip_read_verified: ial21Submission.chip_read_verified,
+            chip_photo_present: ial21Submission.chip_photo_present,
+          });
+          await logAudit(supabase, "kyc.contact_verified", "kyc", submissionId, {
+            channel: "email",
+            method: "supabase_confirm_link_or_otp",
+            verified: Boolean(user.email_confirmed_at),
+            verified_at: user.email_confirmed_at || null,
+          });
+        } catch (auditErr) {
+          console.warn("KYC submitted but audit log insert failed:", auditErr);
+        }
+      }
+
       setStep(4);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
