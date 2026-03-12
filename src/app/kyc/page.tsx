@@ -1,71 +1,127 @@
 ﻿"use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, type ChangeEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
+import type { User } from "@supabase/supabase-js";
+
+type OcrData = {
+  name_th: string;
+  name_en: string;
+  id_number: string;
+  dob: string;
+  expiry: string;
+  address: string;
+};
+
+type ProofMethod = "thai_id_chip" | "external_idp" | "manual_offline";
 
 export default function KYCPage() {
   const supabase = createClient();
   const router = useRouter();
+
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [isEmailVerified, setIsEmailVerified] = useState(false);
 
-  const [frontFile, setFrontFile] = useState(null);
-  const [backFile, setBackFile] = useState(null);
+  const [frontFile, setFrontFile] = useState<File | null>(null);
+  const [backFile, setBackFile] = useState<File | null>(null);
   const [frontPreview, setFrontPreview] = useState("");
   const [backPreview, setBackPreview] = useState("");
 
   const [selfieData, setSelfieData] = useState("");
   const [cameraOn, setCameraOn] = useState(false);
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const streamRef = useRef(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
-  const [ocrData, setOcrData] = useState({ name_th: "", name_en: "", id_number: "", dob: "", expiry: "", address: "" });
+  const [ocrData, setOcrData] = useState<OcrData>({
+    name_th: "",
+    name_en: "",
+    id_number: "",
+    dob: "",
+    expiry: "",
+    address: "",
+  });
+
+  const [proofMethod, setProofMethod] = useState<ProofMethod | "">("");
+  const [proofReference, setProofReference] = useState("");
+  const [proofNote, setProofNote] = useState("");
+  const [readingCard, setReadingCard] = useState(false);
+  const [cardReadError, setCardReadError] = useState("");
 
   const steps = [
     { num: 1, label: "บัตรประชาชน" },
     { num: 2, label: "Selfie" },
-    { num: 3, label: "ตรวจสอบ" },
+    { num: 3, label: "หลักฐาน IAL2.1" },
     { num: 4, label: "ยืนยัน" },
   ];
 
   useEffect(() => {
     async function init() {
-      const { data: { user: u } } = await supabase.auth.getUser();
-      if (!u) { router.push("/"); return; }
+      const {
+        data: { user: u },
+      } = await supabase.auth.getUser();
+      if (!u) {
+        router.push("/");
+        return;
+      }
       setUser(u);
+      setIsEmailVerified(Boolean(u.email_confirmed_at));
     }
-    init();
-    return () => { if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop()); };
-  }, []);
 
-  function handleFileUpload(e, side) {
+    init();
+
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+      }
+    };
+  }, [router, supabase.auth]);
+
+  function handleFileUpload(e: ChangeEvent<HTMLInputElement>, side: "front" | "back") {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (side === "front") { setFrontFile(file); setFrontPreview(URL.createObjectURL(file)); }
-    else { setBackFile(file); setBackPreview(URL.createObjectURL(file)); }
+
+    if (side === "front") {
+      setFrontFile(file);
+      setFrontPreview(URL.createObjectURL(file));
+      return;
+    }
+
+    setBackFile(file);
+    setBackPreview(URL.createObjectURL(file));
   }
 
   async function startCamera() {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: 640, height: 480 } });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user", width: 640, height: 480 },
+      });
       streamRef.current = stream;
-      if (videoRef.current) { videoRef.current.srcObject = stream; }
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
       setCameraOn(true);
-    } catch { alert("ไม่สามารถเปิดกล้องได้"); }
+    } catch {
+      alert("ไม่สามารถเปิดกล้องได้");
+    }
   }
 
   function capturePhoto() {
     if (!videoRef.current || !canvasRef.current) return;
+
     const v = videoRef.current;
     const c = canvasRef.current;
     c.width = v.videoWidth;
     c.height = v.videoHeight;
     c.getContext("2d")?.drawImage(v, 0, 0);
     setSelfieData(c.toDataURL("image/jpeg", 0.8));
-    if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+    }
     setCameraOn(false);
   }
 
@@ -74,8 +130,65 @@ export default function KYCPage() {
     startCamera();
   }
 
+  async function readThaiIdFromLocalAgent() {
+    setCardReadError("");
+    setReadingCard(true);
+
+    try {
+      const resp = await fetch("http://127.0.0.1:18080/read-thai-id", {
+        method: "POST",
+      });
+
+      if (!resp.ok) {
+        throw new Error("Card reader agent returned " + resp.status);
+      }
+
+      const payload = await resp.json();
+      setOcrData((prev) => ({
+        ...prev,
+        name_th: payload.name_th || prev.name_th,
+        name_en: payload.name_en || prev.name_en,
+        id_number: payload.id_number || prev.id_number,
+        dob: payload.dob || prev.dob,
+        expiry: payload.expiry || prev.expiry,
+        address: payload.address || prev.address,
+      }));
+
+      setProofMethod((prev) => (prev || "thai_id_chip"));
+      if (!proofReference) {
+        setProofReference(payload.reference_id || payload.tx_id || "chip-read-local");
+      }
+    } catch {
+      setCardReadError("อ่านบัตรอัตโนมัติไม่สำเร็จ: ตรวจ local agent ที่พอร์ต 18080 หรือกรอกข้อมูลด้วยตนเอง");
+    } finally {
+      setReadingCard(false);
+    }
+  }
+
+  async function uploadKycFile(path: string, body: File | Blob, contentType?: string) {
+    const { error } = await supabase.storage.from("kyc-documents").upload(path, body, {
+      upsert: true,
+      contentType,
+    });
+    if (error) throw error;
+
+    const { data } = supabase.storage.from("kyc-documents").getPublicUrl(path);
+    return data.publicUrl;
+  }
+
   async function handleSubmit() {
     if (!user) return;
+
+    if (!isEmailVerified) {
+      alert("ต้องยืนยันอีเมลก่อนส่ง KYC ตามมาตรฐาน IAL2.1");
+      return;
+    }
+    if (!proofMethod || !proofReference.trim()) {
+      alert("กรุณาระบุแหล่งอ้างอิงการพิสูจน์ตัวตน (Proof Source + Reference)");
+      setStep(2);
+      return;
+    }
+
     setLoading(true);
     try {
       let frontUrl = "";
@@ -83,61 +196,99 @@ export default function KYCPage() {
       let selfieUrl = "";
 
       if (frontFile) {
-        const ext = frontFile.name.split(".").pop();
-        const path = user.id + "/id_front." + ext;
-        await supabase.storage.from("kyc-documents").upload(path, frontFile, { upsert: true });
-        const { data: pu } = supabase.storage.from("kyc-documents").getPublicUrl(path);
-        frontUrl = pu.publicUrl;
-      }
-      if (backFile) {
-        const ext = backFile.name.split(".").pop();
-        const path = user.id + "/id_back." + ext;
-        await supabase.storage.from("kyc-documents").upload(path, backFile, { upsert: true });
-        const { data: pu } = supabase.storage.from("kyc-documents").getPublicUrl(path);
-        backUrl = pu.publicUrl;
-      }
-      if (selfieData) {
-        const blob = await (await fetch(selfieData)).blob();
-        const path = user.id + "/selfie.jpg";
-        await supabase.storage.from("kyc-documents").upload(path, blob, { upsert: true, contentType: "image/jpeg" });
-        const { data: pu } = supabase.storage.from("kyc-documents").getPublicUrl(path);
-        selfieUrl = pu.publicUrl;
+        const ext = frontFile.name.split(".").pop() || "jpg";
+        frontUrl = await uploadKycFile(user.id + "/id_front." + ext, frontFile);
       }
 
-      await supabase.from("kyc_submissions").insert({
+      if (backFile) {
+        const ext = backFile.name.split(".").pop() || "jpg";
+        backUrl = await uploadKycFile(user.id + "/id_back." + ext, backFile);
+      }
+
+      if (selfieData) {
+        const blob = await (await fetch(selfieData)).blob();
+        selfieUrl = await uploadKycFile(user.id + "/selfie.jpg", blob, "image/jpeg");
+      }
+
+      const ial21Submission = {
+        level: "IAL2.1",
+        evidence_method: proofMethod,
+        evidence_reference: proofReference.trim(),
+        evidence_note: proofNote.trim() || null,
+        email_confirmed_at: user.email_confirmed_at,
+        submitted_at: new Date().toISOString(),
+      };
+
+      const { error: insertError } = await supabase.from("kyc_submissions").insert({
         user_id: user.id,
         status: "pending",
         id_card_front_url: frontUrl,
         id_card_back_url: backUrl,
         selfie_url: selfieUrl,
-        ocr_data: ocrData,
+        ocr_data: {
+          ...ocrData,
+          ial21_submission: ial21Submission,
+        },
       });
 
+      if (insertError) throw insertError;
       setStep(4);
-    } catch (err) {
-      alert("เกิดข้อผิดพลาด: " + err.message);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      alert("เกิดข้อผิดพลาด: " + msg);
     }
     setLoading(false);
   }
 
-  const canNext0 = frontFile && backFile;
-  const canNext1 = !!selfieData;
+  const canNext0 = Boolean(frontFile && backFile);
+  const canNext1 = Boolean(selfieData);
+  const canNext2 = Boolean(
+    ocrData.name_th.trim() &&
+      ocrData.id_number.trim() &&
+      proofMethod &&
+      proofReference.trim()
+  );
 
   return (
     <div className="min-h-screen bg-gray-100">
       <div className="bg-white border-b border-gray-200 px-10 py-3.5 flex items-center gap-4">
         <div className="flex items-center gap-2.5">
           <div className="w-9 h-9 bg-gradient-to-br from-gold to-gold-2 rounded-lg flex items-center justify-center font-extrabold text-navy text-sm">ลบส</div>
-          <span className="font-bold text-sm text-navy">IAL 2 ยืนยันตัวตน</span>
+          <span className="font-bold text-sm text-navy">IAL 2.1 ยืนยันตัวตน</span>
         </div>
         <div className="ml-auto text-xs text-gray-500">ขั้นตอนที่ {Math.min(step + 1, 4)} จาก 4</div>
       </div>
+
+      {!isEmailVerified && (
+        <div className="mx-auto max-w-[760px] mt-5 px-5 py-3 rounded-lg border border-status-red bg-status-red-light text-status-red text-sm font-semibold">
+          ต้องยืนยันอีเมลก่อนส่ง KYC ตามข้อกำหนด IAL 2.1
+        </div>
+      )}
+
       <div className="bg-white border-b border-gray-200 px-10">
         <div className="flex">
           {steps.map((s, i) => (
             <div key={i} className="flex items-center">
-              <div className={"flex-1 py-3.5 flex items-center gap-2.5 border-b-[3px] pr-4 " + (i < step ? "border-b-status-green" : i === step ? "border-b-gold" : "border-b-transparent")}>
-                <div className={"w-[26px] h-[26px] rounded-full flex items-center justify-center text-xs font-bold shrink-0 " + (i < step ? "bg-status-green text-white" : i === step ? "bg-gold text-navy" : "bg-gray-200 text-gray-500")}>
+              <div
+                className={
+                  "flex-1 py-3.5 flex items-center gap-2.5 border-b-[3px] pr-4 " +
+                  (i < step
+                    ? "border-b-status-green"
+                    : i === step
+                    ? "border-b-gold"
+                    : "border-b-transparent")
+                }
+              >
+                <div
+                  className={
+                    "w-[26px] h-[26px] rounded-full flex items-center justify-center text-xs font-bold shrink-0 " +
+                    (i < step
+                      ? "bg-status-green text-white"
+                      : i === step
+                      ? "bg-gold text-navy"
+                      : "bg-gray-200 text-gray-500")
+                  }
+                >
                   {i < step ? "✓" : s.num}
                 </div>
                 <span className={"text-xs font-medium " + (i < step ? "text-status-green" : i === step ? "text-navy font-bold" : "text-gray-400")}>{s.label}</span>
@@ -158,15 +309,15 @@ export default function KYCPage() {
                 <div>
                   <p className="text-xs font-bold text-navy mb-2">ด้านหน้า <span className="text-status-red">*</span></p>
                   <label className={"block border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all " + (frontPreview ? "border-status-green bg-status-green-light" : "border-gray-200 bg-gray-50 hover:border-navy-3")}>
-                    <input type="file" accept="image/*" className="hidden" onChange={e => handleFileUpload(e, "front")} />
-                    {frontPreview ? <img src={frontPreview} className="w-full max-h-[160px] object-cover rounded-lg mx-auto" /> : <><span className="text-[40px] block mb-3">📸</span><h4 className="text-sm font-semibold text-navy mb-1">เลือกรูปด้านหน้า</h4><p className="text-xs text-gray-400">JPG, PNG ไม่เกิน 10MB</p></>}
+                    <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileUpload(e, "front")} />
+                    {frontPreview ? <img src={frontPreview} className="w-full max-h-[160px] object-cover rounded-lg mx-auto" alt="ID front" /> : <><span className="text-[40px] block mb-3">📸</span><h4 className="text-sm font-semibold text-navy mb-1">เลือกรูปด้านหน้า</h4><p className="text-xs text-gray-400">JPG, PNG ไม่เกิน 10MB</p></>}
                   </label>
                 </div>
                 <div>
                   <p className="text-xs font-bold text-navy mb-2">ด้านหลัง <span className="text-status-red">*</span></p>
                   <label className={"block border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all " + (backPreview ? "border-status-green bg-status-green-light" : "border-gray-200 bg-gray-50 hover:border-navy-3")}>
-                    <input type="file" accept="image/*" className="hidden" onChange={e => handleFileUpload(e, "back")} />
-                    {backPreview ? <img src={backPreview} className="w-full max-h-[160px] object-cover rounded-lg mx-auto" /> : <><span className="text-[40px] block mb-3">📸</span><h4 className="text-sm font-semibold text-navy mb-1">เลือกรูปด้านหลัง</h4><p className="text-xs text-gray-400">JPG, PNG ไม่เกิน 10MB</p></>}
+                    <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileUpload(e, "back")} />
+                    {backPreview ? <img src={backPreview} className="w-full max-h-[160px] object-cover rounded-lg mx-auto" alt="ID back" /> : <><span className="text-[40px] block mb-3">📸</span><h4 className="text-sm font-semibold text-navy mb-1">เลือกรูปด้านหลัง</h4><p className="text-xs text-gray-400">JPG, PNG ไม่เกิน 10MB</p></>}
                   </label>
                 </div>
               </div>
@@ -188,8 +339,8 @@ export default function KYCPage() {
                     {!cameraOn && !selfieData && <div className="text-center text-white/50"><span className="text-[56px] block mb-3">📷</span><p className="text-[13px]">กดเปิดกล้องเพื่อถ่ายภาพ</p></div>}
                     <video ref={videoRef} autoPlay playsInline className={cameraOn && !selfieData ? "w-full h-full object-cover" : "hidden"} />
                     <canvas ref={canvasRef} className="hidden" />
-                    {cameraOn && !selfieData && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-[56%] w-[160px] h-[200px] border-[3px] border-gold rounded-[50%_50%_45%_45%] pointer-events-none" style={{boxShadow:"0 0 0 9999px rgba(0,0,0,0.45)"}} />}
-                    {selfieData && <img src={selfieData} className="w-full h-full object-cover" />}
+                    {cameraOn && !selfieData && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-[56%] w-[160px] h-[200px] border-[3px] border-gold rounded-[50%_50%_45%_45%] pointer-events-none" style={{ boxShadow: "0 0 0 9999px rgba(0,0,0,0.45)" }} />}
+                    {selfieData && <img src={selfieData} className="w-full h-full object-cover" alt="Selfie" />}
                   </div>
                   <div className="flex gap-2 mt-3">
                     {!selfieData ? (
@@ -205,8 +356,8 @@ export default function KYCPage() {
                 <div>
                   <h4 className="text-[13px] font-bold text-navy mb-3.5">คำแนะนำ</h4>
                   <div className="flex flex-col gap-2.5">
-                    {[["😀","หันหน้าตรง"],["💡","แสงเพียงพอ"],["🎭","ไม่สวมหมวก/แว่นกันแดด"],["📱","ถือนิ่งๆ"]].map(([icon,text],i)=>(
-                      <div key={i} className="flex gap-2.5 text-xs"><span className="text-lg">{icon}</span><span className="text-gray-600 mt-0.5">{text}</span></div>
+                    {["หันหน้าตรง", "แสงเพียงพอ", "ไม่สวมหมวก/แว่นกันแดด", "ถือนิ่งๆ"].map((text, i) => (
+                      <div key={text} className="flex gap-2.5 text-xs"><span className="text-lg">{["😀", "💡", "🎭", "📱"][i]}</span><span className="text-gray-600 mt-0.5">{text}</span></div>
                     ))}
                   </div>
                   {selfieData && <div className="mt-4 p-3 bg-status-green-light border border-status-green rounded-lg text-[13px] font-semibold text-status-green flex items-center gap-2">✅ ถ่ายภาพสำเร็จ</div>}
@@ -223,36 +374,62 @@ export default function KYCPage() {
         {step === 2 && (
           <div className="animate-fade-up">
             <div className="bg-white rounded-[14px] p-8 shadow-sm border border-gray-200">
-              <h2 className="text-xl font-bold text-navy mb-1.5 flex items-center gap-2.5">📋 ตรวจสอบข้อมูล</h2>
-              <p className="text-[13px] text-gray-400 mb-7">กรุณาตรวจสอบข้อมูลก่อนส่ง</p>
-              <div className="grid grid-cols-2 gap-5 mb-6">
+              <h2 className="text-xl font-bold text-navy mb-1.5 flex items-center gap-2.5">📋 หลักฐานพิสูจน์ตัวตน IAL 2.1</h2>
+              <p className="text-[13px] text-gray-400 mb-7">กรอกหลักฐานอ้างอิงการพิสูจน์ตัวตนก่อนส่งให้เจ้าหน้าที่</p>
+
+              <div className="rounded-xl border border-gray-200 p-4 mb-5">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <p className="text-xs font-bold text-navy">อ่านข้อมูลจากเครื่องอ่านบัตร (Optional)</p>
+                  <button onClick={readThaiIdFromLocalAgent} disabled={readingCard} className="px-3 py-1.5 bg-navy text-white rounded-md text-xs font-semibold disabled:opacity-60 border-none cursor-pointer">
+                    {readingCard ? "กำลังอ่าน..." : "อ่านจาก Card Reader"}
+                  </button>
+                </div>
+                {cardReadError && <p className="text-xs text-status-red">{cardReadError}</p>}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 mb-5">
                 <div>
-                  <p className="text-xs font-bold text-navy mb-2">ภาพบัตรประชาชน</p>
-                  <div className="rounded-[10px] overflow-hidden border-2 border-gray-200 aspect-[16/10] bg-gray-100 flex items-center justify-center">
-                    {frontPreview ? <img src={frontPreview} className="w-full h-full object-cover" /> : <span className="text-[32px]">💳</span>}
-                  </div>
+                  <label className="text-[11px] text-gray-500 font-semibold block mb-1">Proof Source <span className="text-status-red">*</span></label>
+                  <select value={proofMethod} onChange={(e) => setProofMethod(e.target.value as ProofMethod)} className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm outline-none focus:border-navy-3">
+                    <option value="">-- เลือกแหล่งยืนยัน --</option>
+                    <option value="thai_id_chip">Thai ID Chip Reader</option>
+                    <option value="external_idp">External IdP / NDID</option>
+                    <option value="manual_offline">Manual Offline Verification</option>
+                  </select>
                 </div>
                 <div>
-                  <p className="text-xs font-bold text-navy mb-2">ภาพ Selfie</p>
-                  <div className="rounded-[10px] overflow-hidden border-2 border-gray-200 aspect-[4/3] bg-gray-100 flex items-center justify-center">
-                    {selfieData ? <img src={selfieData} className="w-full h-full object-cover" /> : <span className="text-[32px]">📸</span>}
-                  </div>
+                  <label className="text-[11px] text-gray-500 font-semibold block mb-1">Proof Reference <span className="text-status-red">*</span></label>
+                  <input type="text" value={proofReference} onChange={(e) => setProofReference(e.target.value)} placeholder="เช่น txn-20260312-001" className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm outline-none focus:border-navy-3" />
                 </div>
               </div>
+
+              <div className="mb-6">
+                <label className="text-[11px] text-gray-500 font-semibold block mb-1">หมายเหตุหลักฐาน (ถ้ามี)</label>
+                <textarea value={proofNote} onChange={(e) => setProofNote(e.target.value)} className="w-full min-h-[72px] px-3 py-2 border border-gray-200 rounded-md text-sm outline-none focus:border-navy-3 resize-none" placeholder="หมายเหตุเพิ่มเติมสำหรับเจ้าหน้าที่" />
+              </div>
+
               <div className="bg-navy rounded-xl p-5 mb-6">
-                <p className="text-xs font-bold text-gold-2 mb-3.5">กรอกข้อมูลจากบัตร (สำหรับ Demo)</p>
+                <p className="text-xs font-bold text-gold-2 mb-3.5">ข้อมูลจากบัตร / OCR</p>
                 <div className="grid grid-cols-2 gap-2.5">
-                  {[["ชื่อ-นามสกุล (ไทย)","name_th"],["Name (English)","name_en"],["เลขบัตรประชาชน","id_number"],["วันเกิด","dob"],["วันหมดอายุ","expiry"],["ที่อยู่","address"]].map(([label,key])=>(
+                  {([
+                    ["ชื่อ-นามสกุล (ไทย)", "name_th"],
+                    ["Name (English)", "name_en"],
+                    ["เลขบัตรประชาชน", "id_number"],
+                    ["วันเกิด", "dob"],
+                    ["วันหมดอายุ", "expiry"],
+                    ["ที่อยู่", "address"],
+                  ] as [string, keyof OcrData][]).map(([label, key]) => (
                     <div key={key}>
                       <label className="text-[11px] text-gold font-semibold tracking-wider block mb-1">{label}</label>
-                      <input type="text" value={ocrData[key]} onChange={e=>setOcrData({...ocrData,[key]:e.target.value})} className="w-full bg-white/7 border border-white/12 rounded-md px-3 py-2 text-white text-[13px] outline-none focus:border-gold" />
+                      <input type="text" value={ocrData[key]} onChange={(e) => setOcrData({ ...ocrData, [key]: e.target.value })} className="w-full bg-white/7 border border-white/12 rounded-md px-3 py-2 text-white text-[13px] outline-none focus:border-gold" />
                     </div>
                   ))}
                 </div>
               </div>
+
               <div className="flex justify-between mt-6 pt-6 border-t border-gray-200">
                 <button onClick={() => setStep(1)} className="px-5 py-2.5 bg-white text-gray-600 border border-gray-200 rounded-md text-sm font-semibold cursor-pointer">← ย้อนกลับ</button>
-                <button onClick={() => setStep(3)} className="px-7 py-2.5 bg-gradient-to-br from-navy-2 to-navy-3 text-white rounded-md text-sm font-bold shadow-[0_4px_14px_rgba(17,34,64,0.3)] transition-all hover:-translate-y-0.5 border-none cursor-pointer">ถัดไป →</button>
+                <button onClick={() => { if (canNext2) setStep(3); }} disabled={!canNext2} className="px-7 py-2.5 bg-gradient-to-br from-navy-2 to-navy-3 text-white rounded-md text-sm font-bold shadow-[0_4px_14px_rgba(17,34,64,0.3)] disabled:opacity-40 transition-all hover:-translate-y-0.5 border-none cursor-pointer">ถัดไป →</button>
               </div>
             </div>
           </div>
@@ -262,13 +439,21 @@ export default function KYCPage() {
           <div className="animate-fade-up">
             <div className="bg-white rounded-[14px] p-8 shadow-sm border border-gray-200 text-center">
               <h2 className="text-xl font-bold text-navy mb-1.5">🔒 ยืนยันการส่ง KYC</h2>
-              <p className="text-[13px] text-gray-400 mb-7">ข้อมูลของคุณจะถูกส่งให้เจ้าหน้าที่ตรวจสอบ</p>
-              <div className="bg-status-cyan-light border border-status-cyan rounded-xl p-5 text-left mb-6">
-                <p className="text-[13px] text-[#007b99] leading-relaxed"><strong>หมายเหตุ:</strong> เจ้าหน้าที่จะตรวจสอบข้อมูลของคุณภายใน 1-2 วันทำการ คุณจะได้รับการแจ้งเตือนทางอีเมลเมื่อผลการตรวจสอบเสร็จสิ้น</p>
+              <p className="text-[13px] text-gray-400 mb-7">ข้อมูลของคุณจะถูกส่งให้เจ้าหน้าที่ตรวจสอบตาม IAL 2.1</p>
+
+              <div className="bg-status-cyan-light border border-status-cyan rounded-xl p-5 text-left mb-4">
+                <p className="text-[13px] text-[#007b99] leading-relaxed">
+                  <strong>Proof Source:</strong> {proofMethod || "-"}
+                  <br />
+                  <strong>Proof Reference:</strong> {proofReference || "-"}
+                  <br />
+                  <strong>Email Verified:</strong> {isEmailVerified ? "Yes" : "No"}
+                </p>
               </div>
+
               <div className="flex gap-3 justify-center">
                 <button onClick={() => setStep(2)} className="px-5 py-2.5 bg-white text-gray-600 border border-gray-200 rounded-md text-sm font-semibold cursor-pointer">← ย้อนกลับ</button>
-                <button onClick={handleSubmit} disabled={loading} className="px-10 py-3 bg-gradient-to-br from-gold to-gold-2 text-navy rounded-md text-sm font-bold shadow-gold hover:-translate-y-0.5 transition-all border-none cursor-pointer disabled:opacity-60 flex items-center gap-2">
+                <button onClick={handleSubmit} disabled={loading || !isEmailVerified} className="px-10 py-3 bg-gradient-to-br from-gold to-gold-2 text-navy rounded-md text-sm font-bold shadow-gold hover:-translate-y-0.5 transition-all border-none cursor-pointer disabled:opacity-60 flex items-center gap-2">
                   {loading ? <span className="inline-block w-4 h-4 border-2 border-navy/30 border-t-navy rounded-full animate-spin" /> : "✅ ส่ง KYC"}
                 </button>
               </div>

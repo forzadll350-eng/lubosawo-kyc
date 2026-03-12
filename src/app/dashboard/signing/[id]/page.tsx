@@ -7,6 +7,7 @@ import { PDFDocument, rgb } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
 import * as QRCode from 'qrcode'
 import * as pdfjsLib from 'pdfjs-dist'
+import { evaluateIal21Access } from '@/lib/ial21'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
 
@@ -52,6 +53,8 @@ export default function SignDocumentPage() {
   const [allSteps, setAllSteps] = useState<StepInfo[]>([])
   const [canSign, setCanSign] = useState(false)
   const [waitingFor, setWaitingFor] = useState('')
+  const [ial21Eligible, setIal21Eligible] = useState(true)
+  const [ial21Reason, setIal21Reason] = useState('')
 
   async function loadLatestStamp(userId: string) {
     const { data, error } = await supabase
@@ -86,6 +89,23 @@ export default function SignDocumentPage() {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push('/'); return }
+
+      const { data: latestKyc } = await supabase
+        .from('kyc_submissions')
+        .select('status, ocr_data, created_at')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      const ialCheck = evaluateIal21Access(user.email_confirmed_at, latestKyc)
+      setIal21Eligible(ialCheck.allowed)
+      setIal21Reason(ialCheck.reason)
+      if (!ialCheck.allowed) {
+        setMessage(`🔒 ${ialCheck.reason}`)
+        setLoading(false)
+        return
+      }
 
       // 1. โหลด workflow ของตัวเอง
       const { data: wf } = await supabase
@@ -223,7 +243,7 @@ export default function SignDocumentPage() {
   }
 
   function handleCanvasClick(e: React.MouseEvent<HTMLCanvasElement>, pageIndex: number) {
-    if (!canSign) return // ★ ถ้ายังไม่ถึงคิว ห้ามคลิก
+    if (!canSign || !ial21Eligible) return // ★ ถ้ายังไม่ถึงคิว ห้ามคลิก
     const canvas = canvasRefs.current[pageIndex]
     if (!canvas) return
     const rect = canvas.getBoundingClientRect()
@@ -237,6 +257,11 @@ export default function SignDocumentPage() {
   }
 
   async function confirmSign() {
+    if (!ial21Eligible) {
+      setMessage(`🔒 ${ial21Reason || 'คุณยังไม่ผ่าน IAL2.1'}`)
+      return
+    }
+
     if (!sigPosition || !pdfBytesForLib.current || !signatureUrl || !signatureId || !workflow || !docData) return
     if (!canSign) { setMessage('❌ ยังไม่ถึงลำดับของคุณ'); return }
     setProcessing(true)
@@ -422,6 +447,19 @@ export default function SignDocumentPage() {
       <div className="text-center">
         <span className="inline-block w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
         <p className="mt-3 text-gray-500 text-sm">กำลังโหลดเอกสาร...</p>
+      </div>
+    </div>
+  )
+
+  if (!ial21Eligible) return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+      <div className="bg-white rounded-xl border border-yellow-300 shadow p-6 max-w-lg w-full text-center">
+        <h1 className="text-xl font-bold text-yellow-800 mb-2">🔒 ยังไม่สามารถลงนามเอกสารได้</h1>
+        <p className="text-sm text-gray-600 mb-5">{ial21Reason || 'ต้องผ่าน IAL2.1 ก่อน'}</p>
+        <div className="flex items-center justify-center gap-3">
+          <button onClick={() => router.push('/kyc')} className="px-4 py-2 bg-yellow-600 text-white rounded-md text-sm font-semibold hover:bg-yellow-700">ไปทำ KYC</button>
+          <button onClick={() => router.push('/dashboard/signing')} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md text-sm font-semibold hover:bg-gray-200">กลับหน้างานลงนาม</button>
+        </div>
       </div>
     </div>
   )

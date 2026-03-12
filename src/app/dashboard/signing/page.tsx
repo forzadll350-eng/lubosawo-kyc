@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
+import { evaluateIal21Access } from '@/lib/ial21'
 
 type Task = {
   id: string
@@ -57,12 +58,26 @@ export default function SigningPage() {
   const [stepsModal, setStepsModal] = useState<WorkflowStep[]>([])
   const [showStepsModal, setShowStepsModal] = useState(false)
   const [stepsModalTitle, setStepsModalTitle] = useState('')
+  const [ial21Eligible, setIal21Eligible] = useState(true)
+  const [ial21Reason, setIal21Reason] = useState('')
 
   useEffect(() => { loadData() }, [])
 
   async function loadData() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/'); return }
+
+    const { data: latestKyc } = await supabase
+      .from('kyc_submissions')
+      .select('status, ocr_data, created_at')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    const ialCheck = evaluateIal21Access(user.email_confirmed_at, latestKyc)
+    setIal21Eligible(ialCheck.allowed)
+    setIal21Reason(ialCheck.reason)
 
     const { data: sig } = await supabase
       .from('user_signatures')
@@ -256,6 +271,11 @@ export default function SigningPage() {
   }
 
   async function handleReject(task: Task) {
+    if (!ial21Eligible) {
+      setMessage(`🔒 ${ial21Reason || 'คุณยังไม่ผ่าน IAL2.1 จึงยังไม่สามารถลงนาม/ปฏิเสธได้'}`)
+      return
+    }
+
     const reason = prompt('ระบุเหตุผลในการปฏิเสธ:')
     if (!reason) return
 
@@ -345,7 +365,12 @@ export default function SigningPage() {
         <button onClick={() => router.push('/dashboard')} className="text-blue-600 hover:underline mb-4 inline-block">← กลับหน้า Dashboard</button>
 
         <h1 className="text-2xl font-bold mb-2">✍️ งานลงนามของฉัน</h1>
-
+        {!ial21Eligible && (
+          <div className="bg-yellow-50 border border-yellow-300 rounded-lg p-3 mb-4 flex items-center justify-between gap-3">
+            <span className="text-sm text-yellow-800">🔒 ยังไม่สามารถลงนามได้: {ial21Reason || 'ไม่ผ่าน IAL2.1'}</span>
+            <button onClick={() => router.push('/kyc')} className="px-3 py-1 bg-yellow-600 text-white rounded text-xs font-semibold hover:bg-yellow-700 whitespace-nowrap">ไปทำ KYC</button>
+          </div>
+        )}
         {!signatureUrl && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 flex items-center justify-between">
             <span className="text-sm text-red-700">⚠️ คุณยังไม่มีลายเซ็น กรุณาอัปโหลดก่อนลงนาม</span>
@@ -425,11 +450,14 @@ export default function SigningPage() {
                         {task.doc_file_url && (
                           <button onClick={() => handleViewFile(task.doc_file_url!)} className="text-blue-600 text-xs font-semibold hover:underline">ดู</button>
                         )}
-                        {task.status === 'pending' && task.can_sign && (
+                        {task.status === 'pending' && task.can_sign && ial21Eligible && (
                           <>
                             <button onClick={() => router.push(`/dashboard/signing/${task.id}`)} className="text-green-600 text-xs font-semibold hover:underline">ลงนาม</button>
                             <button onClick={() => handleReject(task)} className="text-red-600 text-xs font-semibold hover:underline">ปฏิเสธ</button>
                           </>
+                        )}
+                        {task.status === 'pending' && task.can_sign && !ial21Eligible && (
+                          <span className="text-yellow-700 text-xs">🔒 ต้องผ่าน IAL2.1 ก่อน</span>
                         )}
                         {task.status === 'pending' && !task.can_sign && (
                           <span className="text-gray-400 text-xs">🔒 ยังไม่ถึงคิว</span>

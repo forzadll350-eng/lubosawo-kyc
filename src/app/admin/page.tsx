@@ -34,6 +34,13 @@ export default function AdminDashboard() {
   const [reviewModal, setReviewModal] = useState<Submission | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [selectedRoleId, setSelectedRoleId] = useState(5);
+  const [ialChecklist, setIalChecklist] = useState({
+    evidenceSourceChecked: false,
+    faceMatchChecked: false,
+    dataConsistencyChecked: false,
+  });
+  const [reviewError, setReviewError] = useState("");
+  const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => { loadData(); // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -50,16 +57,99 @@ export default function AdminDashboard() {
     setLoading(false);
   }
 
-  async function handleApprove(id: string, userId: string) {
-    await supabase.from("kyc_submissions").update({ status: "approved", reviewed_at: new Date().toISOString() }).eq("id", id);
-    await supabase.from("user_profiles").update({ role_id: selectedRoleId }).eq("id", userId);
-    setReviewModal(null); setSelectedRoleId(5); loadData();
+  function getIalSubmission(submission: Submission | null) {
+    if (!submission?.ocr_data) return null;
+    return submission.ocr_data.ial21_submission || null;
   }
 
-  async function handleReject(id: string) {
+  async function handleApprove(submission: Submission) {
+    const ialSubmission = getIalSubmission(submission);
+    if (!ialSubmission?.evidence_method || !ialSubmission?.evidence_reference) {
+      setReviewError("ยังไม่มีหลักฐานอ้างอิง IAL 2.1 (Proof Source / Proof Reference)");
+      return;
+    }
+
+    const allChecked = ialChecklist.evidenceSourceChecked && ialChecklist.faceMatchChecked && ialChecklist.dataConsistencyChecked;
+    if (!allChecked) {
+      setReviewError("ต้องตรวจ checklist IAL 2.1 ให้ครบก่อนอนุมัติ");
+      return;
+    }
+
+    setActionLoading(true);
+    setReviewError("");
+    const reviewedAt = new Date().toISOString();
+
+    const nextOcrData = {
+      ...(submission.ocr_data || {}),
+      ial21_review: {
+        reviewed_by: user?.id || null,
+        reviewed_at: reviewedAt,
+        decision: "approved",
+        assigned_role_id: selectedRoleId,
+        evidence_source_checked: true,
+        face_match_checked: true,
+        data_consistency_checked: true,
+      },
+    };
+
+    const { error: kycError } = await supabase
+      .from("kyc_submissions")
+      .update({ status: "approved", reviewed_at: reviewedAt, ocr_data: nextOcrData })
+      .eq("id", submission.id);
+    if (kycError) {
+      setReviewError(kycError.message);
+      setActionLoading(false);
+      return;
+    }
+
+    const { error: roleError } = await supabase
+      .from("user_profiles")
+      .update({ role_id: selectedRoleId })
+      .eq("id", submission.user_id);
+    if (roleError) {
+      setReviewError(roleError.message);
+      setActionLoading(false);
+      return;
+    }
+
+    setActionLoading(false);
+    setReviewModal(null);
+    setSelectedRoleId(5);
+    setIalChecklist({ evidenceSourceChecked: false, faceMatchChecked: false, dataConsistencyChecked: false });
+    loadData();
+  }
+
+  async function handleReject(submission: Submission) {
     if (!rejectReason.trim()) { alert("กรุณาระบุเหตุผล"); return; }
-    await supabase.from("kyc_submissions").update({ status: "rejected", reject_reason: rejectReason, reviewed_at: new Date().toISOString() }).eq("id", id);
-    setReviewModal(null); setRejectReason(""); loadData();
+
+    setActionLoading(true);
+    setReviewError("");
+    const reviewedAt = new Date().toISOString();
+    const nextOcrData = {
+      ...(submission.ocr_data || {}),
+      ial21_review: {
+        reviewed_by: user?.id || null,
+        reviewed_at: reviewedAt,
+        decision: "rejected",
+        reject_reason: rejectReason,
+      },
+    };
+
+    const { error } = await supabase
+      .from("kyc_submissions")
+      .update({ status: "rejected", reject_reason: rejectReason, reviewed_at: reviewedAt, ocr_data: nextOcrData })
+      .eq("id", submission.id);
+    if (error) {
+      setReviewError(error.message);
+      setActionLoading(false);
+      return;
+    }
+
+    setActionLoading(false);
+    setReviewModal(null);
+    setRejectReason("");
+    setIalChecklist({ evidenceSourceChecked: false, faceMatchChecked: false, dataConsistencyChecked: false });
+    loadData();
   }
 
   async function handleChangeRole(userId: string, roleId: number) {
@@ -81,6 +171,13 @@ export default function AdminDashboard() {
     {icon:"✅",label:"อนุมัติแล้ว",f:"approved"},
     {icon:"❌",label:"ปฏิเสธ",f:"rejected"}
   ];
+  const currentIalSubmission = getIalSubmission(reviewModal);
+  const hasIalEvidence = Boolean(currentIalSubmission?.evidence_method && currentIalSubmission?.evidence_reference);
+  const canApprove =
+    hasIalEvidence &&
+    ialChecklist.evidenceSourceChecked &&
+    ialChecklist.faceMatchChecked &&
+    ialChecklist.dataConsistencyChecked;
 
   if (loading) return <div className="min-h-screen bg-gray-100 flex items-center justify-center"><span className="inline-block w-8 h-8 border-3 border-navy/20 border-t-navy rounded-full animate-spin" /></div>;
 
@@ -151,7 +248,7 @@ export default function AdminDashboard() {
                       )}
                     </td>
                     <td className="px-4 py-3 border-b border-gray-100 text-xs text-gray-500">{new Date(s.created_at).toLocaleDateString("th-TH")}</td>
-                    <td className="px-4 py-3 border-b border-gray-100"><button onClick={()=>{setReviewModal(s); setSelectedRoleId(s.user_profiles?.role_id || 5);}} className="px-3 py-1.5 bg-navy text-white rounded-md text-xs font-semibold hover:bg-navy-3 transition-colors border-none cursor-pointer">ตรวจสอบ</button></td>
+                    <td className="px-4 py-3 border-b border-gray-100"><button onClick={()=>{setReviewModal(s); setSelectedRoleId(s.user_profiles?.role_id || 5); setRejectReason(""); setReviewError(""); setIalChecklist({ evidenceSourceChecked: false, faceMatchChecked: false, dataConsistencyChecked: false });}} className="px-3 py-1.5 bg-navy text-white rounded-md text-xs font-semibold hover:bg-navy-3 transition-colors border-none cursor-pointer">ตรวจสอบ</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -162,7 +259,7 @@ export default function AdminDashboard() {
       {reviewModal&&(
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center" onClick={()=>setReviewModal(null)}>
           <div className="bg-white rounded-2xl w-full max-w-[700px] max-h-[90vh] overflow-y-auto shadow-lg animate-fade-up" onClick={(e)=>e.stopPropagation()}>
-            <div className="px-7 py-5 border-b border-gray-200 flex items-center gap-3.5 sticky top-0 bg-white z-10"><h3 className="text-[17px] font-bold text-navy">ตรวจสอบ KYC</h3><span className={"ml-2 inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold "+(chipCls[reviewModal.status]||"")}>{chipLabel[reviewModal.status]}</span><button onClick={()=>setReviewModal(null)} className="ml-auto w-8 h-8 bg-gray-100 hover:bg-gray-200 rounded-lg flex items-center justify-center cursor-pointer border-none">✕</button></div>
+            <div className="px-7 py-5 border-b border-gray-200 flex items-center gap-3.5 sticky top-0 bg-white z-10"><h3 className="text-[17px] font-bold text-navy">ตรวจสอบ KYC (IAL 2.1)</h3><span className={"ml-2 inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold "+(chipCls[reviewModal.status]||"")}>{chipLabel[reviewModal.status]}</span><button onClick={()=>setReviewModal(null)} className="ml-auto w-8 h-8 bg-gray-100 hover:bg-gray-200 rounded-lg flex items-center justify-center cursor-pointer border-none">✕</button></div>
             <div className="p-7">
               <div className="grid grid-cols-2 gap-6 mb-6">
                 <div>
@@ -187,6 +284,15 @@ export default function AdminDashboard() {
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-2 mb-4">{([["ชื่อ",reviewModal.user_profiles?.full_name||"-"],["อีเมล",reviewModal.user_profiles?.email||"-"],["เบอร์โทร",reviewModal.user_profiles?.phone||"-"],["วันที่ส่ง",new Date(reviewModal.created_at).toLocaleDateString("th-TH")]] as [string, string][]).map(([k,v],i)=><div key={i} className="p-1"><label className="text-[10px] text-gray-400 font-semibold block mb-0.5">{k}</label><span className="text-[13px] text-navy font-semibold">{v}</span></div>)}</div>
+              <div className={"rounded-xl p-4 mb-4 border " + (hasIalEvidence ? "border-status-green bg-status-green-light" : "border-status-red bg-status-red-light")}>
+                <p className="text-xs font-bold mb-2 text-navy">หลักฐาน IAL 2.1</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div><label className="text-[10px] text-gray-500 font-semibold block mb-0.5">Proof Source</label><span className="text-[13px] font-semibold text-navy">{currentIalSubmission?.evidence_method || "-"}</span></div>
+                  <div><label className="text-[10px] text-gray-500 font-semibold block mb-0.5">Proof Reference</label><span className="text-[13px] font-semibold text-navy">{currentIalSubmission?.evidence_reference || "-"}</span></div>
+                  <div><label className="text-[10px] text-gray-500 font-semibold block mb-0.5">Email Confirmed At</label><span className="text-[13px] font-semibold text-navy">{currentIalSubmission?.email_confirmed_at ? new Date(currentIalSubmission.email_confirmed_at).toLocaleString("th-TH") : "-"}</span></div>
+                  <div><label className="text-[10px] text-gray-500 font-semibold block mb-0.5">ระดับ</label><span className="text-[13px] font-semibold text-navy">{currentIalSubmission?.level || "IAL2.1"}</span></div>
+                </div>
+              </div>
               {reviewModal.ocr_data && Object.values(reviewModal.ocr_data).some((v: unknown) => v) && (
                 <div className="bg-navy rounded-xl p-5 mb-4">
                   <p className="text-xs font-bold text-gold-2 mb-3">ข้อมูลจากบัตร</p>
@@ -210,11 +316,28 @@ export default function AdminDashboard() {
                     {ROLES.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
                   </select>
                 </div>
+                <div className="mb-4 p-3 border border-gray-200 rounded-lg bg-white">
+                  <p className="text-[12px] font-bold text-navy mb-2">Checklist ก่อนอนุมัติ (IAL 2.1)</p>
+                  <label className="flex items-center gap-2 text-xs text-gray-700 mb-2">
+                    <input type="checkbox" checked={ialChecklist.evidenceSourceChecked} onChange={(e)=>setIalChecklist({ ...ialChecklist, evidenceSourceChecked: e.target.checked })} />
+                    ตรวจสอบ Proof Source / Proof Reference แล้ว
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-gray-700 mb-2">
+                    <input type="checkbox" checked={ialChecklist.faceMatchChecked} onChange={(e)=>setIalChecklist({ ...ialChecklist, faceMatchChecked: e.target.checked })} />
+                    เปรียบเทียบใบหน้ากับบัตร/หลักฐานแล้ว
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-gray-700">
+                    <input type="checkbox" checked={ialChecklist.dataConsistencyChecked} onChange={(e)=>setIalChecklist({ ...ialChecklist, dataConsistencyChecked: e.target.checked })} />
+                    ตรวจสอบความสอดคล้องข้อมูลทั้งหมดแล้ว
+                  </label>
+                  {!hasIalEvidence && <p className="mt-2 text-xs text-status-red font-semibold">ไม่สามารถอนุมัติได้: ยังไม่มีข้อมูล Proof Source/Reference ใน submission</p>}
+                </div>
                 <div className="flex gap-2.5 items-end">
                   <textarea value={rejectReason} onChange={(e)=>setRejectReason(e.target.value)} placeholder="เหตุผลในการปฏิเสธ (ถ้ามี)" className="flex-1 px-3 py-2.5 border-[1.5px] border-gray-200 rounded-lg text-[13px] resize-none h-[70px] outline-none focus:border-navy-3"/>
-                  <button onClick={()=>handleApprove(reviewModal.id, reviewModal.user_id)} className="px-7 py-2.5 bg-status-green text-white rounded-lg text-[13px] font-bold cursor-pointer border-none whitespace-nowrap">อนุมัติ</button>
-                  <button onClick={()=>handleReject(reviewModal.id)} className="px-6 py-2.5 bg-status-red text-white rounded-lg text-[13px] font-bold cursor-pointer border-none whitespace-nowrap">ปฏิเสธ</button>
+                  <button disabled={!canApprove || actionLoading} onClick={()=>handleApprove(reviewModal)} className="px-7 py-2.5 bg-status-green text-white rounded-lg text-[13px] font-bold cursor-pointer border-none whitespace-nowrap disabled:opacity-50">{actionLoading ? "กำลังบันทึก..." : "อนุมัติ"}</button>
+                  <button disabled={actionLoading} onClick={()=>handleReject(reviewModal)} className="px-6 py-2.5 bg-status-red text-white rounded-lg text-[13px] font-bold cursor-pointer border-none whitespace-nowrap disabled:opacity-50">{actionLoading ? "กำลังบันทึก..." : "ปฏิเสธ"}</button>
                 </div>
+                {reviewError && <div className="mt-3 text-xs font-semibold text-status-red">{reviewError}</div>}
               </div>
             )}
           </div>

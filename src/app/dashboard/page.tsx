@@ -21,6 +21,7 @@ export default function UserDashboard() {
   const [profile, setProfile] = useState<any>(null);
   const [kycStatus, setKycStatus] = useState("not_submitted");
   const [kycDate, setKycDate] = useState<string | null>(null);
+  const [kycSubmission, setKycSubmission] = useState<any>(null);
   const [signatureUrl, setSignatureUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -47,6 +48,7 @@ export default function UserDashboard() {
       if (kyc) {
         setKycStatus(kyc.status);
         setKycDate(kyc.created_at);
+        setKycSubmission(kyc);
       }
 
       const { data: sig } = await supabase.from("user_signatures").select("signature_url").eq("user_id", u.id).eq("is_active", true).maybeSingle();
@@ -164,12 +166,28 @@ export default function UserDashboard() {
     rejected: { label: "ปฏิเสธ", chip: "bg-status-red-light text-status-red", icon: "❌" },
   };
   const sc = statusConfig[kycStatus] || statusConfig.not_submitted;
+  const emailVerified = Boolean(user?.email_confirmed_at);
+  const ial21Submission = kycSubmission?.ocr_data?.ial21_submission;
+  const ial21Review = kycSubmission?.ocr_data?.ial21_review;
+  const hasIal21Evidence = Boolean(ial21Submission?.evidence_method && ial21Submission?.evidence_reference);
+  const ial21Reviewed = Boolean(
+    ial21Review?.evidence_source_checked &&
+    ial21Review?.face_match_checked &&
+    ial21Review?.data_consistency_checked
+  );
+  const ial21Verified = kycStatus === "approved" && ial21Reviewed;
+  const ialLevelLabel = ial21Verified
+    ? "IAL 2.1 (verified)"
+    : hasIal21Evidence
+    ? "IAL 2.1 (pending officer review)"
+    : "IAL 2.1 (incomplete evidence)";
 
   const timelineSteps = [
     { label: "สมัครสมาชิก", done: true },
-    { label: "ยืนยันอีเมล", done: true },
+    { label: "ยืนยันอีเมล", done: emailVerified, active: !emailVerified },
     { label: "ส่ง KYC", done: kycStatus !== "not_submitted" },
-    { label: "ตรวจสอบ", done: kycStatus === "approved" || kycStatus === "reviewing", active: kycStatus === "pending" || kycStatus === "reviewing" },
+    { label: "มีหลักฐาน IAL2.1", done: hasIal21Evidence, active: kycStatus !== "not_submitted" && !hasIal21Evidence },
+    { label: "ตรวจเจ้าหน้าที่", done: ial21Reviewed, active: (kycStatus === "pending" || kycStatus === "reviewing") && !ial21Reviewed },
     { label: "อนุมัติ", done: kycStatus === "approved" },
   ];
 
@@ -236,7 +254,7 @@ export default function UserDashboard() {
       <div className="p-8 max-w-[1080px] mx-auto">
         <div className="mb-5">
           <h2 className="text-xl font-bold text-navy">สวัสดี, {firstName} 👋</h2>
-          <p className="text-[13px] text-gray-400">ระบบยืนยันตัวตน IAL 2 — ดูสถานะและจัดการข้อมูลของคุณ</p>
+          <p className="text-[13px] text-gray-400">ระบบยืนยันตัวตน IAL 2.1 — ดูสถานะและจัดการข้อมูลของคุณ</p>
         </div>
 
         {/* ★ สถิติ — responsive grid ★ */}
@@ -259,17 +277,17 @@ export default function UserDashboard() {
 
         {/* IAL STATUS CARD */}
         <div className="bg-white rounded-[14px] border border-gray-200 p-7 mb-6 flex items-center gap-6 shadow-sm">
-          <div className={"w-20 h-20 shrink-0 rounded-full flex flex-col items-center justify-center font-extrabold border-3 " + (kycStatus === "approved" ? "bg-status-green-light border-status-green" : "bg-status-orange-light border-status-orange")}>
-            <div className={"text-[28px] " + (kycStatus === "approved" ? "text-status-green" : "text-status-orange")}>2</div>
-            <div className={"text-[10px] font-bold " + (kycStatus === "approved" ? "text-status-green" : "text-status-orange")}>IAL</div>
+          <div className={"w-20 h-20 shrink-0 rounded-full flex flex-col items-center justify-center font-extrabold border-3 " + (ial21Verified ? "bg-status-green-light border-status-green" : "bg-status-orange-light border-status-orange")}>
+            <div className={"text-[24px] " + (ial21Verified ? "text-status-green" : "text-status-orange")}>2.1</div>
+            <div className={"text-[10px] font-bold " + (ial21Verified ? "text-status-green" : "text-status-orange")}>IAL</div>
           </div>
 
           <div className="flex-1">
             <h3 className="text-lg font-bold text-navy mb-1">
-              {kycStatus === "approved" ? "ยืนยันตัวตนสำเร็จ" : kycStatus === "not_submitted" ? "ยังไม่ได้ยืนยันตัวตน" : kycStatus === "rejected" ? "การยืนยันถูกปฏิเสธ" : "อยู่ระหว่างดำเนินการ"}
+              {ial21Verified ? "ยืนยันตัวตนสำเร็จ (IAL 2.1)" : kycStatus === "not_submitted" ? "ยังไม่ได้ยืนยันตัวตน" : kycStatus === "rejected" ? "การยืนยันถูกปฏิเสธ" : "อยู่ระหว่างดำเนินการ"}
             </h3>
             <p className="text-[13px] text-gray-500 mb-2.5">
-              {kycStatus === "approved" ? "คุณผ่านการยืนยันตัวตน IAL 2 เรียบร้อยแล้ว" : kycStatus === "not_submitted" ? "กรุณาส่งข้อมูล KYC เพื่อเริ่มกระบวนการยืนยันตัวตน" : kycStatus === "rejected" ? "กรุณาตรวจสอบข้อมูลและส่ง KYC ใหม่อีกครั้ง" : "เจ้าหน้าที่กำลังตรวจสอบข้อมูลของคุณ โปรดรอ 1-2 วัน"}
+              {ial21Verified ? "คุณผ่านการยืนยันตัวตน IAL 2.1 เรียบร้อยแล้ว" : kycStatus === "not_submitted" ? "กรุณาส่งข้อมูล KYC เพื่อเริ่มกระบวนการยืนยันตัวตน" : kycStatus === "rejected" ? "กรุณาตรวจสอบข้อมูลและส่ง KYC ใหม่อีกครั้ง" : "ส่งข้อมูลแล้ว รอเจ้าหน้าที่ตรวจหลักฐาน IAL 2.1 เพิ่มเติม"}
             </p>
 
             <div className="flex gap-2 items-center flex-wrap">
@@ -283,6 +301,9 @@ export default function UserDashboard() {
                 </div>
               ))}
             </div>
+            {!hasIal21Evidence && kycStatus !== "not_submitted" && (
+              <p className="mt-2 text-[11px] text-status-red font-semibold">ยังไม่พบ Proof Source / Proof Reference ในคำขอ KYC นี้</p>
+            )}
           </div>
 
           <div className="shrink-0 text-center">
@@ -345,8 +366,9 @@ export default function UserDashboard() {
             <h4 className="text-sm font-bold text-navy mb-4 flex items-center gap-2">🔐 ข้อมูล KYC</h4>
             <div className="space-y-0">
               {[
-                ["ระดับ IAL", "IAL 2 (ยืนยันตัวตนขั้นสูง)"],
-                ["วิธียืนยัน", "บัตรประชาชน + Selfie"],
+                ["ระดับ IAL", ialLevelLabel],
+                ["วิธียืนยัน", ial21Submission?.evidence_method ? `${ial21Submission.evidence_method} + selfie` : "บัตรประชาชน + Selfie"],
+                ["Proof Ref", ial21Submission?.evidence_reference || "-"],
                 ["สถานะ KYC", null],
                 ["วันที่ส่ง", kycDate ? new Date(kycDate).toLocaleDateString("th-TH") : "-"],
               ].map(([k, v], i) => (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 
@@ -22,35 +22,64 @@ export default function LandingPage() {
   const router = useRouter();
   const supabase = createClient();
 
-  async function handleLogin(e) {
+  async function handleLogin(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError("");
     setLoading(true);
     const { data, error: authError } = await supabase.auth.signInWithPassword({
       email: loginEmail, password: loginPw,
     });
-    if (authError) { setError(authError.message); setLoading(false); return; }
+    if (authError) {
+      const m = authError.message.toLowerCase();
+      if (m.includes("email not confirmed") || m.includes("email not verified")) {
+        setError("กรุณายืนยันอีเมลก่อนเข้าสู่ระบบ");
+      } else {
+        setError(authError.message);
+      }
+      setLoading(false);
+      return;
+    }
+    if (!data.user.email_confirmed_at) {
+      await supabase.auth.signOut();
+      setError("กรุณายืนยันอีเมลก่อนเข้าสู่ระบบ");
+      setLoading(false);
+      return;
+    }
     const { data: profile } = await supabase.from("user_profiles").select("role_id, roles(name)").eq("id", data.user.id).single();
     const roleName = profile?.roles?.name;
     if (roleName === "admin" || roleName === "super_admin") { router.push("/admin"); } else { router.push("/dashboard"); }
   }
 
-  async function handleRegister(e) {
+  async function handleRegister(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError("");
     if (regPw !== regPw2) { setError("รหัสผ่านไม่ตรงกัน"); return; }
     if (regPw.length < 8) { setError("รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร"); return; }
     setLoading(true);
+    const emailRedirectTo = typeof window !== "undefined"
+      ? window.location.origin + "/auth/callback"
+      : undefined;
     const { error: signUpError } = await supabase.auth.signUp({
       email: regEmail, password: regPw,
-      options: { data: { full_name: regFname + " " + regLname, phone: regPhone, position: regPosition, department: regDepartment } },
+      options: {
+        emailRedirectTo,
+        data: { full_name: regFname + " " + regLname, phone: regPhone, position: regPosition, department: regDepartment },
+      },
     });
-    if (signUpError) { setError(signUpError.message); setLoading(false); return; }
-    alert("สมัครสำเร็จ! กรุณาตรวจสอบอีเมลเพื่อยืนยัน");
+    if (signUpError) {
+      const m = signUpError.message.toLowerCase();
+      if (m.includes("email not confirmed") || m.includes("email not verified")) {
+        setError("กรุณายืนยันอีเมลก่อนเข้าสู่ระบบ");
+      } else {
+        setError(signUpError.message);
+      }
+      setLoading(false);
+      return;
+    }
+    alert("สมัครสำเร็จ! กรุณาตรวจสอบอีเมลเพื่อยืนยันก่อนใช้งาน KYC");
     setActiveTab("login");
     setLoading(false);
   }
-
   const inputCls = "w-full px-3.5 py-2.5 border-[1.5px] border-gray-200 rounded-md text-sm focus:border-navy-3 focus:ring-2 focus:ring-navy-3/10 outline-none transition-all";
 
   const departmentOptions = [
@@ -77,7 +106,7 @@ export default function LandingPage() {
         <div className="relative z-10">
           <div className="inline-flex items-center gap-2 bg-gold/15 border border-gold/35 rounded-full px-3.5 py-1.5 text-gold-2 text-xs font-semibold tracking-wide mb-6">
             <span className="w-1.5 h-1.5 bg-gold rounded-full animate-pulse-gold" />
-            KYC Level 2
+            KYC Level 2.1
           </div>
           <h2 className="text-4xl font-bold text-white leading-tight mb-4">พิสูจน์ตัวตน<br />อย่าง<span className="text-gold-2">น่าเชื่อถือ</span></h2>
           <p className="text-white/60 text-sm leading-relaxed max-w-md">ระบบยืนยันตัวตนผ่านบัตรประชาชนและการจดจำใบหน้า เพื่อการเข้าใช้บริการระบบสารบรรณอิเล็กทรอนิกส์อย่างปลอดภัย</p>
