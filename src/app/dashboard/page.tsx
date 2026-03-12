@@ -170,6 +170,9 @@ export default function UserDashboard() {
   const ial21Submission = kycSubmission?.ocr_data?.ial21_submission;
   const ial21Review = kycSubmission?.ocr_data?.ial21_review;
   const hasIal21Evidence = Boolean(ial21Submission?.evidence_method && ial21Submission?.evidence_reference);
+  const chipReadVerified = Boolean(ial21Submission?.chip_read_verified);
+  const chipReadAt = ial21Submission?.chip_read_at ? new Date(ial21Submission.chip_read_at).toLocaleString("th-TH") : "-";
+  const chipMethodSelected = ial21Submission?.evidence_method === "thai_id_chip";
   const ial21Reviewed = Boolean(
     ial21Review?.evidence_source_checked &&
     ial21Review?.face_match_checked &&
@@ -369,6 +372,8 @@ export default function UserDashboard() {
                 ["ระดับ IAL", ialLevelLabel],
                 ["วิธียืนยัน", ial21Submission?.evidence_method ? `${ial21Submission.evidence_method} + selfie` : "บัตรประชาชน + Selfie"],
                 ["Proof Ref", ial21Submission?.evidence_reference || "-"],
+                ["อ่านชิปบัตร", chipMethodSelected ? (chipReadVerified ? "ผ่าน" : "ไม่ผ่าน/ไม่พบหลักฐาน") : "-"],
+                ["เวลาอ่านชิป", chipMethodSelected ? chipReadAt : "-"],
                 ["สถานะ KYC", null],
                 ["วันที่ส่ง", kycDate ? new Date(kycDate).toLocaleDateString("th-TH") : "-"],
               ].map(([k, v], i) => (

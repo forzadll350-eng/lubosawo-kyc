@@ -16,6 +16,30 @@ type OcrData = {
 
 type ProofMethod = "thai_id_chip" | "external_idp" | "manual_offline";
 
+type CardReadProof = {
+  id_number: string;
+  name_th: string;
+  name_en: string;
+  read_at: string;
+  reference_id: string;
+  source: string;
+};
+
+function digitsOnly(input: string) {
+  return (input || "").replace(/\D/g, "");
+}
+
+function isValidThaiCitizenId(input: string) {
+  const id = digitsOnly(input);
+  if (id.length !== 13) return false;
+  let sum = 0;
+  for (let i = 0; i < 12; i += 1) {
+    sum += Number(id[i]) * (13 - i);
+  }
+  const checkDigit = (11 - (sum % 11)) % 10;
+  return checkDigit === Number(id[12]);
+}
+
 export default function KYCPage() {
   const supabase = createClient();
   const router = useRouter();
@@ -50,6 +74,7 @@ export default function KYCPage() {
   const [proofNote, setProofNote] = useState("");
   const [readingCard, setReadingCard] = useState(false);
   const [cardReadError, setCardReadError] = useState("");
+  const [cardReadProof, setCardReadProof] = useState<CardReadProof | null>(null);
 
   const steps = [
     { num: 1, label: "บัตรประชาชน" },
@@ -162,22 +187,37 @@ export default function KYCPage() {
       if (!payload) {
         throw new Error(lastError || "cannot connect to local card reader agent");
       }
+      const cardId = digitsOnly(String(payload.id_number || ""));
+      if (!isValidThaiCitizenId(cardId)) {
+        throw new Error("การ์ดที่อ่านได้ไม่ใช่บัตรประชาชนไทย หรือเลขบัตรไม่ถูกต้อง");
+      }
+      const readAt = String(payload.read_at || new Date().toISOString());
+      const refId = String(payload.reference_id || payload.tx_id || "chip-read-local");
 
       setOcrData((prev) => ({
         ...prev,
         name_th: (payload.name_th as string) || prev.name_th,
         name_en: (payload.name_en as string) || prev.name_en,
-        id_number: (payload.id_number as string) || prev.id_number,
+        id_number: cardId || prev.id_number,
         dob: (payload.dob as string) || prev.dob,
         expiry: (payload.expiry as string) || prev.expiry,
         address: (payload.address as string) || prev.address,
       }));
 
-      setProofMethod((prev) => (prev || "thai_id_chip"));
+      setCardReadProof({
+        id_number: cardId,
+        name_th: String(payload.name_th || ""),
+        name_en: String(payload.name_en || ""),
+        read_at: readAt,
+        reference_id: refId,
+        source: String(payload.source || "thai_id_chip"),
+      });
+      setProofMethod("thai_id_chip");
       if (!proofReference) {
-        setProofReference((payload.reference_id as string) || (payload.tx_id as string) || "chip-read-local");
+        setProofReference(refId);
       }
     } catch (err: unknown) {
+      setCardReadProof(null);
       const msg = err instanceof Error ? err.message : "unknown error";
       setCardReadError(`อ่านบัตรอัตโนมัติไม่สำเร็จ: ${msg}. ตรวจ local agent ที่พอร์ต 18080 หรือกรอกข้อมูลด้วยตนเอง`);
     } finally {
@@ -208,6 +248,24 @@ export default function KYCPage() {
       setStep(2);
       return;
     }
+    if (proofMethod === "thai_id_chip" && !cardReadProof) {
+      alert("เลือก Thai ID Chip Reader แล้ว ต้องกดอ่านบัตรจากเครื่องอ่านให้สำเร็จก่อน");
+      setStep(2);
+      return;
+    }
+    if (proofMethod === "thai_id_chip") {
+      const formId = digitsOnly(ocrData.id_number);
+      if (!isValidThaiCitizenId(formId)) {
+        alert("เลขบัตรประชาชนที่ส่งไม่ถูกต้อง");
+        setStep(2);
+        return;
+      }
+      if (digitsOnly(cardReadProof?.id_number || "") !== formId) {
+        alert("เลขบัตรจากเครื่องอ่านไม่ตรงกับข้อมูลที่กรอก จึงยังส่ง KYC ไม่ได้");
+        setStep(2);
+        return;
+      }
+    }
 
     setLoading(true);
     try {
@@ -237,6 +295,20 @@ export default function KYCPage() {
         evidence_note: proofNote.trim() || null,
         email_confirmed_at: user.email_confirmed_at,
         submitted_at: new Date().toISOString(),
+        chip_read_verified: proofMethod === "thai_id_chip" ? Boolean(cardReadProof) : false,
+        chip_read_at: proofMethod === "thai_id_chip" ? cardReadProof?.read_at || null : null,
+        chip_reference_id:
+          proofMethod === "thai_id_chip"
+            ? cardReadProof?.reference_id || proofReference.trim()
+            : null,
+        chip_id_match:
+          proofMethod === "thai_id_chip"
+            ? digitsOnly(cardReadProof?.id_number || "") === digitsOnly(ocrData.id_number)
+            : null,
+        chip_id_last4:
+          proofMethod === "thai_id_chip"
+            ? digitsOnly(ocrData.id_number).slice(-4)
+            : null,
       };
 
       const { error: insertError } = await supabase.from("kyc_submissions").insert({
@@ -266,7 +338,8 @@ export default function KYCPage() {
     ocrData.name_th.trim() &&
       ocrData.id_number.trim() &&
       proofMethod &&
-      proofReference.trim()
+      proofReference.trim() &&
+      (proofMethod !== "thai_id_chip" || cardReadProof)
   );
 
   return (
@@ -405,6 +478,11 @@ export default function KYCPage() {
                   </button>
                 </div>
                 {cardReadError && <p className="text-xs text-status-red">{cardReadError}</p>}
+                {cardReadProof && (
+                  <p className="text-xs text-status-green font-semibold mt-1">
+                    ✅ อ่านบัตรสำเร็จ (Ref: {cardReadProof.reference_id}, เลขท้าย {cardReadProof.id_number.slice(-4)})
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3 mb-5">
