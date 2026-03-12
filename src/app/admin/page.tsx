@@ -243,6 +243,9 @@ export default function AdminDashboard() {
           <button onClick={()=>router.push('/admin/users')} className="flex items-center gap-2.5 w-full text-left px-3 py-2.5 rounded-lg text-[13px] font-medium mb-0.5 transition-all border-none cursor-pointer text-white/65 hover:bg-white/7 hover:text-white bg-transparent">
             <span className="text-base w-5 text-center">👥</span>จัดการผู้ใช้
           </button>
+          <button onClick={()=>router.push('/admin/privacy-requests')} className="flex items-center gap-2.5 w-full text-left px-3 py-2.5 rounded-lg text-[13px] font-medium mb-0.5 transition-all border-none cursor-pointer text-white/65 hover:bg-white/7 hover:text-white bg-transparent">
+            <span className="text-base w-5 text-center">🛡️</span>คำขอสิทธิ PDPA
+          </button>
 
           {/* ★ ลิงก์ลัด */}
           <div className="text-[10px] font-bold text-white/30 tracking-widest uppercase px-2 py-1.5 mt-3">ลิงก์ลัด</div>

@@ -210,6 +210,7 @@ export default function UserDashboard() {
     { icon: "📄", label: "เอกสารของฉัน", desc: "สร้าง/อัปโหลดเอกสาร", path: "/dashboard/documents", color: "from-blue-500 to-blue-600" },
     { icon: "✍️", label: "งานลงนาม", desc: `${pendingSignCount} รายการรอลงนาม`, path: "/dashboard/signing", color: "from-orange-500 to-orange-600" },
     { icon: "📜", label: "บันทึกกิจกรรม", desc: "ประวัติการดำเนินการ", path: "/dashboard/audit-log", color: "from-purple-500 to-purple-600" },
+    { icon: "🛡️", label: "สิทธิข้อมูล PDPA", desc: "ยื่นคำขอสิทธิเจ้าของข้อมูล", path: "/dashboard/privacy", color: "from-emerald-500 to-teal-600" },
     ...(isAdmin ? [{ icon: "⚙️", label: "จัดการระบบ", desc: "Admin Panel", path: "/admin", color: "from-red-500 to-red-600" }] : []),
   ];
 
