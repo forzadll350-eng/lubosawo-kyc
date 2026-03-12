@@ -6,6 +6,30 @@
 alter table public.kyc_submissions
   drop constraint if exists kyc_submissions_chip_method_requires_chip_proof;
 
+-- 1.1) Avoid CHECK creation failure from legacy pending rows.
+update public.kyc_submissions
+set
+  status = 'rejected',
+  reject_reason = coalesce(nullif(reject_reason, ''), 'Auto-rejected: missing strict IAL2.1 evidence after guardrail upgrade'),
+  reviewed_at = coalesce(reviewed_at, now())
+where status = 'pending'
+  and not (
+    coalesce(ocr_data->'ial21_submission'->>'evidence_method', '') = 'thai_id_chip'
+    and lower(coalesce(ocr_data->'ial21_submission'->>'chip_read_verified', 'false')) = 'true'
+    and lower(coalesce(ocr_data->'ial21_submission'->>'chip_id_match', 'false')) = 'true'
+    and lower(coalesce(ocr_data->'ial21_submission'->>'chip_name_match', 'false')) = 'true'
+    and lower(coalesce(ocr_data->'ial21_submission'->>'chip_dob_match', 'false')) = 'true'
+    and lower(coalesce(ocr_data->'ial21_submission'->>'chip_photo_present', 'false')) = 'true'
+    and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'chip_photo_url', '')), '') is not null
+    and lower(coalesce(ocr_data->'ial21_submission'->>'contact_channel_verified', 'false')) = 'true'
+    and coalesce(ocr_data->'ial21_submission'->>'contact_channel_type', '') = 'email_otp'
+    and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'contact_otp_reference', '')), '') is not null
+    and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'contact_verification_id', '')), '') is not null
+    and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'contact_verified_at', '')), '') is not null
+    and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'chip_read_at', '')), '') is not null
+    and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'evidence_reference', '')), '') is not null
+  );
+
 alter table public.kyc_submissions
   add constraint kyc_submissions_chip_method_requires_chip_proof
   check (
@@ -19,6 +43,9 @@ alter table public.kyc_submissions
       and lower(coalesce(ocr_data->'ial21_submission'->>'chip_photo_present', 'false')) = 'true'
       and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'chip_photo_url', '')), '') is not null
       and lower(coalesce(ocr_data->'ial21_submission'->>'contact_channel_verified', 'false')) = 'true'
+      and coalesce(ocr_data->'ial21_submission'->>'contact_channel_type', '') = 'email_otp'
+      and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'contact_otp_reference', '')), '') is not null
+      and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'contact_verification_id', '')), '') is not null
       and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'contact_verified_at', '')), '') is not null
       and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'chip_read_at', '')), '') is not null
       and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'evidence_reference', '')), '') is not null
@@ -43,6 +70,9 @@ with check (
     and lower(coalesce(ocr_data->'ial21_submission'->>'chip_photo_present', 'false')) = 'true'
     and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'chip_photo_url', '')), '') is not null
     and lower(coalesce(ocr_data->'ial21_submission'->>'contact_channel_verified', 'false')) = 'true'
+    and coalesce(ocr_data->'ial21_submission'->>'contact_channel_type', '') = 'email_otp'
+    and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'contact_otp_reference', '')), '') is not null
+    and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'contact_verification_id', '')), '') is not null
     and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'contact_verified_at', '')), '') is not null
     and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'chip_read_at', '')), '') is not null
     and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'evidence_reference', '')), '') is not null
@@ -69,6 +99,9 @@ with check (
       and lower(coalesce(ocr_data->'ial21_submission'->>'chip_photo_present', 'false')) = 'true'
       and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'chip_photo_url', '')), '') is not null
       and lower(coalesce(ocr_data->'ial21_submission'->>'contact_channel_verified', 'false')) = 'true'
+      and coalesce(ocr_data->'ial21_submission'->>'contact_channel_type', '') = 'email_otp'
+      and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'contact_otp_reference', '')), '') is not null
+      and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'contact_verification_id', '')), '') is not null
       and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'contact_verified_at', '')), '') is not null
       and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'chip_read_at', '')), '') is not null
       and nullif(trim(coalesce(ocr_data->'ial21_submission'->>'evidence_reference', '')), '') is not null

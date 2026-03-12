@@ -63,6 +63,196 @@ function normalizeDateForCompare(input: string) {
   return `${String(y).padStart(4, "0")}-${m[2]}-${m[3]}`;
 }
 
+function createOtpReference() {
+  const ts = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `otp-${ts}-${rand}`;
+}
+
+function normalizeChipText(input: string) {
+  return (input || "")
+    .replace(/[#]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatThaiIdDisplay(input: string) {
+  const id = digitsOnly(input);
+  if (id.length !== 13) return id;
+  return `${id.slice(0, 1)}-${id.slice(1, 5)}-${id.slice(5, 10)}-${id.slice(10, 12)}-${id.slice(12, 13)}`;
+}
+
+function drawRoundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function drawWrappedText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  maxWidth: number,
+  lineHeight: number
+) {
+  const words = (text || "").split(" ");
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (ctx.measureText(next).width <= maxWidth) {
+      current = next;
+      continue;
+    }
+    if (current) lines.push(current);
+    current = word;
+  }
+  if (current) lines.push(current);
+  lines.forEach((line, i) => {
+    ctx.fillText(line, x, y + i * lineHeight);
+  });
+}
+
+function loadImageFromDataUrl(dataUrl: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("load image failed"));
+    image.src = dataUrl;
+  });
+}
+
+async function generateThaiIdCardPreviewBlob(input: {
+  idNumber: string;
+  nameTh: string;
+  nameEn: string;
+  dob: string;
+  expiry: string;
+  address: string;
+  referenceId: string;
+  photoBase64: string;
+}) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1280;
+  canvas.height = 800;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("cannot create preview canvas");
+  }
+
+  const bg = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+  bg.addColorStop(0, "#f8fafc");
+  bg.addColorStop(1, "#e2e8f0");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const cardX = 70;
+  const cardY = 60;
+  const cardW = 1140;
+  const cardH = 680;
+
+  drawRoundedRect(ctx, cardX + 10, cardY + 12, cardW, cardH, 30);
+  ctx.fillStyle = "rgba(15, 23, 42, 0.12)";
+  ctx.fill();
+
+  const cardBg = ctx.createLinearGradient(cardX, cardY, cardX + cardW, cardY + cardH);
+  cardBg.addColorStop(0, "#fff7ed");
+  cardBg.addColorStop(1, "#ffe4e6");
+  drawRoundedRect(ctx, cardX, cardY, cardW, cardH, 30);
+  ctx.fillStyle = cardBg;
+  ctx.fill();
+  ctx.strokeStyle = "#be123c";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  ctx.fillStyle = "#881337";
+  ctx.font = "700 48px 'Noto Sans Thai', sans-serif";
+  ctx.fillText("บัตรประจำตัวประชาชน", cardX + 60, cardY + 90);
+  ctx.font = "600 24px 'Noto Sans Thai', sans-serif";
+  ctx.fillText("Thai National ID (Preview from chip data)", cardX + 60, cardY + 128);
+
+  const faceX = cardX + cardW - 320;
+  const faceY = cardY + 170;
+  const faceW = 220;
+  const faceH = 280;
+  drawRoundedRect(ctx, faceX - 10, faceY - 10, faceW + 20, faceH + 20, 16);
+  ctx.fillStyle = "#fff";
+  ctx.fill();
+  ctx.strokeStyle = "#9f1239";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  if (input.photoBase64) {
+    const photoDataUrl = `data:image/jpeg;base64,${input.photoBase64}`;
+    const faceImage = await loadImageFromDataUrl(photoDataUrl);
+    ctx.drawImage(faceImage, faceX, faceY, faceW, faceH);
+  } else {
+    ctx.fillStyle = "#f1f5f9";
+    ctx.fillRect(faceX, faceY, faceW, faceH);
+    ctx.fillStyle = "#64748b";
+    ctx.font = "600 22px 'Noto Sans Thai', sans-serif";
+    ctx.fillText("No chip face", faceX + 30, faceY + faceH / 2);
+  }
+
+  const leftX = cardX + 60;
+  const valueX = leftX + 250;
+  let rowY = cardY + 210;
+  const rowGap = 66;
+
+  const rows: Array<[string, string]> = [
+    ["เลขบัตรประชาชน", formatThaiIdDisplay(input.idNumber)],
+    ["ชื่อ-นามสกุล (ไทย)", normalizeChipText(input.nameTh)],
+    ["Name (English)", normalizeChipText(input.nameEn)],
+    ["วันเกิด", normalizeDateForCompare(input.dob)],
+    ["วันหมดอายุ", normalizeDateForCompare(input.expiry)],
+  ];
+
+  rows.forEach(([label, value]) => {
+    ctx.fillStyle = "#475569";
+    ctx.font = "600 25px 'Noto Sans Thai', sans-serif";
+    ctx.fillText(label, leftX, rowY);
+    ctx.fillStyle = "#0f172a";
+    ctx.font = "700 28px 'Noto Sans Thai', sans-serif";
+    ctx.fillText(value || "-", valueX, rowY);
+    rowY += rowGap;
+  });
+
+  ctx.fillStyle = "#475569";
+  ctx.font = "600 25px 'Noto Sans Thai', sans-serif";
+  ctx.fillText("ที่อยู่", leftX, rowY);
+  ctx.fillStyle = "#0f172a";
+  ctx.font = "600 24px 'Noto Sans Thai', sans-serif";
+  drawWrappedText(ctx, normalizeChipText(input.address) || "-", valueX, rowY, 500, 34);
+
+  ctx.fillStyle = "#7f1d1d";
+  ctx.font = "600 21px 'Noto Sans Thai', sans-serif";
+  ctx.fillText(`Chip Ref: ${input.referenceId || "-"}`, cardX + 60, cardY + cardH - 36);
+  ctx.textAlign = "right";
+  ctx.fillText("Generated from Thai ID chip reader data", cardX + cardW - 40, cardY + cardH - 36);
+  ctx.textAlign = "left";
+
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((result) => {
+      if (result) {
+        resolve(result);
+        return;
+      }
+      reject(new Error("cannot encode chip card preview"));
+    }, "image/png");
+  });
+
+  return blob;
+}
+
 export default function KYCPage() {
   const supabase = createClient();
   const router = useRouter();
@@ -98,6 +288,15 @@ export default function KYCPage() {
   const [readingCard, setReadingCard] = useState(false);
   const [cardReadError, setCardReadError] = useState("");
   const [cardReadProof, setCardReadProof] = useState<CardReadProof | null>(null);
+  const [otpSending, setOtpSending] = useState(false);
+  const [otpVerifying, setOtpVerifying] = useState(false);
+  const [otpCode, setOtpCode] = useState("");
+  const [otpStatus, setOtpStatus] = useState("");
+  const [otpError, setOtpError] = useState("");
+  const [otpReference, setOtpReference] = useState("");
+  const [otpSentAt, setOtpSentAt] = useState<string | null>(null);
+  const [otpVerifiedAt, setOtpVerifiedAt] = useState<string | null>(null);
+  const [chipCardPreviewLocalUrl, setChipCardPreviewLocalUrl] = useState("");
 
   const steps = [
     { num: 1, label: "บัตรประชาชน" },
@@ -127,6 +326,14 @@ export default function KYCPage() {
       }
     };
   }, [router, supabase.auth]);
+
+  useEffect(() => {
+    return () => {
+      if (chipCardPreviewLocalUrl) {
+        URL.revokeObjectURL(chipCardPreviewLocalUrl);
+      }
+    };
+  }, [chipCardPreviewLocalUrl]);
 
   function handleFileUpload(e: ChangeEvent<HTMLInputElement>, side: "front" | "back") {
     const file = e.target.files?.[0];
@@ -176,6 +383,90 @@ export default function KYCPage() {
   function retakeSelfie() {
     setSelfieData("");
     startCamera();
+  }
+
+  async function sendEmailOtp() {
+    if (!user?.email) {
+      setOtpError("ไม่พบอีเมลผู้ใช้ในระบบ");
+      return;
+    }
+
+    setOtpSending(true);
+    setOtpStatus("");
+    setOtpError("");
+
+    try {
+      const reference = createOtpReference();
+      const { error } = await supabase.auth.signInWithOtp({
+        email: user.email,
+        options: {
+          shouldCreateUser: false,
+          data: {
+            otp_purpose: "kyc_ial21_submission",
+            otp_reference: reference,
+          },
+        },
+      });
+
+      if (error) throw error;
+
+      const sentAt = new Date().toISOString();
+      setOtpReference(reference);
+      setOtpSentAt(sentAt);
+      setOtpVerifiedAt(null);
+      setOtpCode("");
+      setOtpStatus("ส่ง OTP แล้ว กรุณากรอกรหัสจากอีเมลเพื่อยืนยัน");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "unknown error";
+      setOtpError(`ส่ง OTP ไม่สำเร็จ: ${msg}`);
+    } finally {
+      setOtpSending(false);
+    }
+  }
+
+  async function verifyEmailOtp() {
+    if (!user?.email) {
+      setOtpError("ไม่พบอีเมลผู้ใช้ในระบบ");
+      return;
+    }
+    if (!otpReference) {
+      setOtpError("กรุณากดส่ง OTP ก่อน");
+      return;
+    }
+    if (!otpCode.trim()) {
+      setOtpError("กรุณากรอกรหัส OTP");
+      return;
+    }
+
+    setOtpVerifying(true);
+    setOtpStatus("");
+    setOtpError("");
+
+    try {
+      const { error } = await supabase.auth.verifyOtp({
+        email: user.email,
+        token: otpCode.trim(),
+        type: "email",
+      });
+      if (error) throw error;
+
+      const verifiedAt = new Date().toISOString();
+      setOtpVerifiedAt(verifiedAt);
+      setIsEmailVerified(true);
+      setOtpStatus("ยืนยัน OTP สำเร็จ");
+
+      const {
+        data: { user: refreshedUser },
+      } = await supabase.auth.getUser();
+      if (refreshedUser) {
+        setUser(refreshedUser);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "unknown error";
+      setOtpError(`ยืนยัน OTP ไม่สำเร็จ: ${msg}`);
+    } finally {
+      setOtpVerifying(false);
+    }
   }
 
   async function readThaiIdFromLocalAgent() {
@@ -246,12 +537,37 @@ export default function KYCPage() {
         chip_photo_present: chipPhotoPresent,
         photo_base64: photoBase64,
       });
+
+      const chipCardPreviewBlob = await generateThaiIdCardPreviewBlob({
+        idNumber: cardId,
+        nameTh: String(payload.name_th || ""),
+        nameEn: String(payload.name_en || ""),
+        dob,
+        expiry: String(payload.expiry || ""),
+        address: String(payload.address || ""),
+        referenceId: refId,
+        photoBase64,
+      });
+      const chipCardPreviewUrl = URL.createObjectURL(chipCardPreviewBlob);
+      setChipCardPreviewLocalUrl((prev) => {
+        if (prev) {
+          URL.revokeObjectURL(prev);
+        }
+        return chipCardPreviewUrl;
+      });
+
       setProofMethod("thai_id_chip");
       if (!proofReference) {
         setProofReference(refId);
       }
     } catch (err: unknown) {
       setCardReadProof(null);
+      setChipCardPreviewLocalUrl((prev) => {
+        if (prev) {
+          URL.revokeObjectURL(prev);
+        }
+        return "";
+      });
       const msg = err instanceof Error ? err.message : "unknown error";
       setCardReadError(`อ่านบัตรอัตโนมัติไม่สำเร็จ: ${msg}. ตรวจ local agent ที่พอร์ต 18080 หรือกรอกข้อมูลด้วยตนเอง`);
     } finally {
@@ -275,6 +591,11 @@ export default function KYCPage() {
 
     if (!isEmailVerified) {
       alert("ต้องยืนยันอีเมลก่อนส่ง KYC ตามมาตรฐาน IAL2.1");
+      return;
+    }
+    if (!otpVerifiedAt || !otpReference) {
+      alert("ต้องยืนยัน Email OTP ก่อนส่ง KYC ตามมาตรฐาน IAL2.1");
+      setStep(2);
       return;
     }
     if (!proofMethod || !proofReference.trim()) {
@@ -326,6 +647,8 @@ export default function KYCPage() {
       let backUrl = "";
       let selfieUrl = "";
       let chipPhotoUrl = "";
+      let chipCardPreviewUrl = "";
+      let contactVerificationId = "";
 
       if (frontFile) {
         const ext = frontFile.name.split(".").pop() || "jpg";
@@ -345,6 +668,51 @@ export default function KYCPage() {
         const chipDataUrl = `data:image/jpeg;base64,${cardReadProof.photo_base64}`;
         const chipBlob = await (await fetch(chipDataUrl)).blob();
         chipPhotoUrl = await uploadKycFile(user.id + "/chip_face.jpg", chipBlob, "image/jpeg");
+      }
+      if (proofMethod === "thai_id_chip" && cardReadProof) {
+        const chipCardPreviewBlob = await generateThaiIdCardPreviewBlob({
+          idNumber: digitsOnly(ocrData.id_number) || cardReadProof.id_number,
+          nameTh: ocrData.name_th || cardReadProof.name_th,
+          nameEn: ocrData.name_en || cardReadProof.name_en,
+          dob: ocrData.dob || cardReadProof.dob,
+          expiry: ocrData.expiry,
+          address: ocrData.address,
+          referenceId: cardReadProof.reference_id || proofReference.trim(),
+          photoBase64: cardReadProof.photo_base64,
+        });
+        chipCardPreviewUrl = await uploadKycFile(user.id + "/chip_id_preview.png", chipCardPreviewBlob, "image/png");
+      }
+
+      if (!user.email) {
+        throw new Error("ไม่พบอีเมลผู้ใช้สำหรับบันทึกหลักฐาน OTP");
+      }
+
+      const { data: contactVerification, error: contactVerificationError } = await supabase
+        .from("ial21_contact_verifications")
+        .insert({
+          user_id: user.id,
+          channel: "email",
+          method: "supabase_email_otp",
+          verification_target: user.email,
+          otp_reference: otpReference,
+          status: "verified",
+          sent_at: otpSentAt,
+          verified_at: otpVerifiedAt,
+          details: {
+            verification_context: "kyc_ial21_submission",
+            auth_email_confirmed_at: user.email_confirmed_at || null,
+          },
+        })
+        .select("id")
+        .single();
+
+      if (contactVerificationError) {
+        throw new Error(`บันทึกหลักฐาน Email OTP ไม่สำเร็จ: ${contactVerificationError.message}`);
+      }
+
+      contactVerificationId = String(contactVerification?.id || "");
+      if (!contactVerificationId) {
+        throw new Error("บันทึกหลักฐาน Email OTP ไม่สำเร็จ (missing verification id)");
       }
 
       const ial21Submission = {
@@ -384,10 +752,16 @@ export default function KYCPage() {
           proofMethod === "thai_id_chip"
             ? chipPhotoUrl || null
             : null,
-        contact_channel_verified: Boolean(user.email_confirmed_at),
-        contact_channel_type: "email_otp_or_link",
-        contact_verified_at: user.email_confirmed_at || null,
+        chip_card_preview_url:
+          proofMethod === "thai_id_chip"
+            ? chipCardPreviewUrl || null
+            : null,
+        contact_channel_verified: Boolean(otpVerifiedAt),
+        contact_channel_type: "email_otp",
+        contact_verified_at: otpVerifiedAt,
         contact_channel_ref: user.email || null,
+        contact_otp_reference: otpReference,
+        contact_verification_id: contactVerificationId,
       };
 
       const { data: inserted, error: insertError } = await supabase.from("kyc_submissions").insert({
@@ -406,18 +780,30 @@ export default function KYCPage() {
 
       const submissionId = inserted?.id as string | undefined;
       if (submissionId) {
+        const { error: linkContactError } = await supabase
+          .from("ial21_contact_verifications")
+          .update({ kyc_submission_id: submissionId })
+          .eq("id", contactVerificationId)
+          .eq("user_id", user.id);
+        if (linkContactError) {
+          throw new Error(`ผูกหลักฐาน OTP กับคำขอ KYC ไม่สำเร็จ: ${linkContactError.message}`);
+        }
+
         try {
           await logAudit(supabase, "kyc.submit", "kyc", submissionId, {
             proof_source: proofMethod,
             proof_reference: proofReference.trim(),
             chip_read_verified: ial21Submission.chip_read_verified,
             chip_photo_present: ial21Submission.chip_photo_present,
+            chip_card_preview_uploaded: Boolean(ial21Submission.chip_card_preview_url),
           });
           await logAudit(supabase, "kyc.contact_verified", "kyc", submissionId, {
             channel: "email",
-            method: "supabase_confirm_link_or_otp",
-            verified: Boolean(user.email_confirmed_at),
-            verified_at: user.email_confirmed_at || null,
+            method: "supabase_email_otp",
+            verification_id: contactVerificationId,
+            otp_reference: otpReference,
+            verified: Boolean(otpVerifiedAt),
+            verified_at: otpVerifiedAt,
           });
         } catch (auditErr) {
           console.warn("KYC submitted but audit log insert failed:", auditErr);
@@ -439,6 +825,7 @@ export default function KYCPage() {
       ocrData.id_number.trim() &&
       proofMethod &&
       proofReference.trim() &&
+      otpVerifiedAt &&
       (proofMethod !== "thai_id_chip" || (cardReadProof && cardReadProof.chip_photo_present))
   );
 
@@ -583,6 +970,51 @@ export default function KYCPage() {
                     ✅ อ่านบัตรสำเร็จ (Ref: {cardReadProof.reference_id}, เลขท้าย {cardReadProof.id_number.slice(-4)}, chip photo: {cardReadProof.chip_photo_present ? "found" : "missing"})
                   </p>
                 )}
+                {chipCardPreviewLocalUrl && (
+                  <div className="mt-3">
+                    <p className="text-[11px] text-gray-500 font-semibold mb-1">ตัวอย่างบัตรจากข้อมูลชิป (Generated Preview)</p>
+                    <div className="rounded-[10px] border border-gray-200 bg-gray-50 overflow-hidden">
+                      <img src={chipCardPreviewLocalUrl} alt="Thai ID preview from chip data" className="w-full h-auto object-contain" />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-gray-200 p-4 mb-5">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <p className="text-xs font-bold text-navy">ยืนยันช่องทางติดต่อด้วย Email OTP (Required)</p>
+                  <button
+                    onClick={sendEmailOtp}
+                    disabled={otpSending || !user?.email}
+                    className="px-3 py-1.5 bg-navy text-white rounded-md text-xs font-semibold disabled:opacity-60 border-none cursor-pointer"
+                  >
+                    {otpSending ? "กำลังส่ง..." : "ส่ง OTP ไปอีเมล"}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mb-2">ส่งไปที่: {user?.email || "-"}</p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={otpCode}
+                    onChange={(e) => setOtpCode(e.target.value)}
+                    placeholder="กรอกรหัส OTP"
+                    className="flex-1 px-3 py-2 border border-gray-200 rounded-md text-sm outline-none focus:border-navy-3"
+                  />
+                  <button
+                    onClick={verifyEmailOtp}
+                    disabled={otpVerifying || !otpCode.trim()}
+                    className="px-3 py-2 bg-status-green text-white rounded-md text-xs font-semibold disabled:opacity-60 border-none cursor-pointer"
+                  >
+                    {otpVerifying ? "กำลังยืนยัน..." : "ยืนยัน OTP"}
+                  </button>
+                </div>
+                {otpStatus && <p className="text-xs text-status-green font-semibold mt-2">{otpStatus}</p>}
+                {otpError && <p className="text-xs text-status-red font-semibold mt-2">{otpError}</p>}
+                {otpVerifiedAt && (
+                  <p className="text-xs text-status-green font-semibold mt-2">
+                    ✅ OTP Verified ({new Date(otpVerifiedAt).toLocaleString("th-TH")}) | Ref: {otpReference || "-"}
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3 mb-5">
@@ -649,13 +1081,19 @@ export default function KYCPage() {
                   <br />
                   <strong>Chip Photo:</strong> {cardReadProof?.chip_photo_present ? "Found" : "Missing"}
                   <br />
+                  <strong>Chip ID Card Preview:</strong> {chipCardPreviewLocalUrl ? "Ready" : "Pending generation"}
+                  <br />
+                  <strong>Email OTP:</strong> {otpVerifiedAt ? "Verified" : "Not verified"}
+                  <br />
+                  <strong>OTP Reference:</strong> {otpReference || "-"}
+                  <br />
                   <strong>Email Verified:</strong> {isEmailVerified ? "Yes" : "No"}
                 </p>
               </div>
 
               <div className="flex gap-3 justify-center">
                 <button onClick={() => setStep(2)} className="px-5 py-2.5 bg-white text-gray-600 border border-gray-200 rounded-md text-sm font-semibold cursor-pointer">← ย้อนกลับ</button>
-                <button onClick={handleSubmit} disabled={loading || !isEmailVerified} className="px-10 py-3 bg-gradient-to-br from-gold to-gold-2 text-navy rounded-md text-sm font-bold shadow-gold hover:-translate-y-0.5 transition-all border-none cursor-pointer disabled:opacity-60 flex items-center gap-2">
+                <button onClick={handleSubmit} disabled={loading || !isEmailVerified || !otpVerifiedAt} className="px-10 py-3 bg-gradient-to-br from-gold to-gold-2 text-navy rounded-md text-sm font-bold shadow-gold hover:-translate-y-0.5 transition-all border-none cursor-pointer disabled:opacity-60 flex items-center gap-2">
                   {loading ? <span className="inline-block w-4 h-4 border-2 border-navy/30 border-t-navy rounded-full animate-spin" /> : "✅ ส่ง KYC"}
                 </button>
               </div>

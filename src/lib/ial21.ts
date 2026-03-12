@@ -7,7 +7,12 @@ type Ial21Submission = {
   chip_dob_match?: boolean | null;
   chip_photo_present?: boolean | null;
   chip_photo_url?: string | null;
+  chip_card_preview_url?: string | null;
   contact_channel_verified?: boolean | null;
+  contact_channel_type?: string | null;
+  contact_channel_ref?: string | null;
+  contact_otp_reference?: string | null;
+  contact_verification_id?: string | null;
   contact_verified_at?: string | null;
 };
 
@@ -78,10 +83,16 @@ export function evaluateIal21Access(
     };
   }
 
-  if (!submission.contact_channel_verified || !submission.contact_verified_at) {
+  if (
+    !submission.contact_channel_verified ||
+    !submission.contact_verified_at ||
+    submission.contact_channel_type !== "email_otp" ||
+    !submission.contact_otp_reference ||
+    !submission.contact_verification_id
+  ) {
     return {
       allowed: false,
-      reason: "ยังไม่มีหลักฐานยืนยันช่องทางติดต่อ (email/otp verification)",
+      reason: "ยังไม่มีหลักฐานยืนยันช่องทางติดต่อแบบ email OTP",
     };
   }
 

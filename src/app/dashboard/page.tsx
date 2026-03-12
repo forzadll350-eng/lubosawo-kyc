@@ -177,7 +177,11 @@ export default function UserDashboard() {
   const chipDobMatch = Boolean(ial21Submission?.chip_dob_match);
   const chipPhotoPresent = Boolean(ial21Submission?.chip_photo_present);
   const chipPhotoUrl = ial21Submission?.chip_photo_url || "";
+  const chipCardPreviewUrl = ial21Submission?.chip_card_preview_url || "";
   const contactChannelVerified = Boolean(ial21Submission?.contact_channel_verified);
+  const contactChannelType = ial21Submission?.contact_channel_type || "";
+  const contactOtpReference = ial21Submission?.contact_otp_reference || "";
+  const contactVerificationId = ial21Submission?.contact_verification_id || "";
   const contactVerifiedAt = ial21Submission?.contact_verified_at
     ? new Date(ial21Submission.contact_verified_at).toLocaleString("th-TH")
     : "-";
@@ -386,7 +390,11 @@ export default function UserDashboard() {
                 ["เทียบวันเกิดกับชิป", chipMethodSelected ? (chipDobMatch ? "ตรง" : "ไม่ตรง") : "-"],
                 ["ภาพใบหน้าจากชิป", chipMethodSelected ? (chipPhotoPresent ? "พบ" : "ไม่พบ") : "-"],
                 ["หลักฐานรูปจากชิป", chipMethodSelected ? (chipPhotoUrl ? "มีไฟล์หลักฐาน" : "ไม่มีไฟล์หลักฐาน") : "-"],
+                ["ภาพบัตรจากชิป (Generated)", chipMethodSelected ? (chipCardPreviewUrl ? "มีไฟล์ภาพบัตร" : "ยังไม่มีไฟล์ภาพบัตร") : "-"],
                 ["ยืนยันช่องทางติดต่อ", contactChannelVerified ? "ยืนยันแล้ว" : "ยังไม่ยืนยัน"],
+                ["ชนิดการยืนยันติดต่อ", contactChannelType || "-"],
+                ["OTP Ref", contactOtpReference || "-"],
+                ["Contact Verification ID", contactVerificationId || "-"],
                 ["เวลายืนยันช่องทาง", contactVerifiedAt],
                 ["สถานะ KYC", null],
                 ["วันที่ส่ง", kycDate ? new Date(kycDate).toLocaleDateString("th-TH") : "-"],
