@@ -221,7 +221,7 @@ export default function LandingPage() {
               <div className="w-10 h-10 bg-white/5 border border-white/10 rounded-lg flex items-center justify-center text-lg shrink-0">💳</div>
               <div>
                 <strong className="text-white text-sm block">ตรวจสอบบัตรประชาชน</strong>
-                <span className="text-white/50 text-xs">อัปโหลดภาพบัตรหน้า-หลัง พร้อมอ่านข้อมูล</span>
+                <span className="text-white/50 text-xs">อัปโหลดภาพบัตรด้านหน้า พร้อมอ่านข้อมูลจากชิปบัตร</span>
               </div>
             </div>
             <div className="flex items-start gap-3.5">

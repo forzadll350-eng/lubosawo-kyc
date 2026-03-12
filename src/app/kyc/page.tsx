@@ -17,6 +17,8 @@ type OcrData = {
 
 type ProofMethod = "thai_id_chip" | "external_idp" | "manual_offline";
 const REQUIRE_CHIP_READER = true;
+const PDPA_NOTICE_VERSION = "PDPA-KYC-v1.0-2026-03-12";
+const PDPA_RETENTION_DAYS = 3650;
 
 type CardReadProof = {
   id_number: string;
@@ -263,9 +265,7 @@ export default function KYCPage() {
   const [isEmailVerified, setIsEmailVerified] = useState(false);
 
   const [frontFile, setFrontFile] = useState<File | null>(null);
-  const [backFile, setBackFile] = useState<File | null>(null);
   const [frontPreview, setFrontPreview] = useState("");
-  const [backPreview, setBackPreview] = useState("");
 
   const [selfieData, setSelfieData] = useState("");
   const [cameraOn, setCameraOn] = useState(false);
@@ -297,6 +297,8 @@ export default function KYCPage() {
   const [otpSentAt, setOtpSentAt] = useState<string | null>(null);
   const [otpVerifiedAt, setOtpVerifiedAt] = useState<string | null>(null);
   const [chipCardPreviewLocalUrl, setChipCardPreviewLocalUrl] = useState("");
+  const [consentGeneral, setConsentGeneral] = useState(false);
+  const [consentBiometric, setConsentBiometric] = useState(false);
 
   const steps = [
     { num: 1, label: "บัตรประชาชน" },
@@ -335,18 +337,11 @@ export default function KYCPage() {
     };
   }, [chipCardPreviewLocalUrl]);
 
-  function handleFileUpload(e: ChangeEvent<HTMLInputElement>, side: "front" | "back") {
+  function handleFileUpload(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    if (side === "front") {
-      setFrontFile(file);
-      setFrontPreview(URL.createObjectURL(file));
-      return;
-    }
-
-    setBackFile(file);
-    setBackPreview(URL.createObjectURL(file));
+    setFrontFile(file);
+    setFrontPreview(URL.createObjectURL(file));
   }
 
   async function startCamera() {
@@ -589,6 +584,10 @@ export default function KYCPage() {
   async function handleSubmit() {
     if (!user) return;
 
+    if (!consentGeneral || !consentBiometric) {
+      alert("กรุณายินยอม PDPA และยินยอมใช้ข้อมูลชีวมิติโดยชัดแจ้งก่อนส่ง KYC");
+      return;
+    }
     if (!isEmailVerified) {
       alert("ต้องยืนยันอีเมลก่อนส่ง KYC ตามมาตรฐาน IAL2.1");
       return;
@@ -644,20 +643,15 @@ export default function KYCPage() {
     setLoading(true);
     try {
       let frontUrl = "";
-      let backUrl = "";
       let selfieUrl = "";
       let chipPhotoUrl = "";
       let chipCardPreviewUrl = "";
       let contactVerificationId = "";
+      const consentAt = new Date().toISOString();
 
       if (frontFile) {
         const ext = frontFile.name.split(".").pop() || "jpg";
         frontUrl = await uploadKycFile(user.id + "/id_front." + ext, frontFile);
-      }
-
-      if (backFile) {
-        const ext = backFile.name.split(".").pop() || "jpg";
-        backUrl = await uploadKycFile(user.id + "/id_back." + ext, backFile);
       }
 
       if (selfieData) {
@@ -763,16 +757,34 @@ export default function KYCPage() {
         contact_otp_reference: otpReference,
         contact_verification_id: contactVerificationId,
       };
+      const pdpaConsent = {
+        version: PDPA_NOTICE_VERSION,
+        consent_given_at: consentAt,
+        consent_general: true,
+        consent_biometric_explicit: true,
+        purposes: [
+          "พิสูจน์และยืนยันตัวตนผู้ใช้ระบบ",
+          "ตรวจสอบสิทธิ์การลงนามเอกสารอิเล็กทรอนิกส์",
+          "เก็บหลักฐานเพื่อตรวจสอบย้อนหลังตามกฎหมาย",
+        ],
+        data_categories: ["ข้อมูลบัตรประชาชน (ด้านหน้า)", "ข้อมูลจากชิปบัตร", "ภาพใบหน้า (selfie)", "บันทึกการยืนยัน OTP"],
+        retention_days: PDPA_RETENTION_DAYS,
+        retention_policy:
+          "จัดเก็บไม่เกิน 10 ปีนับจากวันยืนยันตัวตน หรือเท่าที่กฎหมายกำหนด แล้วลบ/ทำให้ไม่สามารถระบุตัวตนได้",
+        recipients: ["เจ้าหน้าที่ผู้ได้รับมอบหมายในหน่วยงาน", "ผู้ประมวลผลข้อมูลที่จำเป็นต่อการให้บริการระบบ"],
+        data_subject_rights: ["ขอเข้าถึงข้อมูล", "ขอแก้ไขข้อมูล", "ขอลบข้อมูล", "เพิกถอนความยินยอม", "ร้องเรียนต่อหน่วยงานกำกับ"],
+      };
 
       const { data: inserted, error: insertError } = await supabase.from("kyc_submissions").insert({
         user_id: user.id,
         status: "pending",
         id_card_front_url: frontUrl,
-        id_card_back_url: backUrl,
+        id_card_back_url: null,
         selfie_url: selfieUrl,
         ocr_data: {
           ...ocrData,
           ial21_submission: ial21Submission,
+          pdpa_consent: pdpaConsent,
         },
       }).select("id").single();
 
@@ -805,6 +817,13 @@ export default function KYCPage() {
             verified: Boolean(otpVerifiedAt),
             verified_at: otpVerifiedAt,
           });
+          await logAudit(supabase, "kyc.pdpa_consent", "kyc", submissionId, {
+            consent_version: PDPA_NOTICE_VERSION,
+            consent_general: true,
+            consent_biometric_explicit: true,
+            consent_at: consentAt,
+            retention_days: PDPA_RETENTION_DAYS,
+          });
         } catch (auditErr) {
           console.warn("KYC submitted but audit log insert failed:", auditErr);
         }
@@ -818,7 +837,7 @@ export default function KYCPage() {
     setLoading(false);
   }
 
-  const canNext0 = Boolean(frontFile && backFile);
+  const canNext0 = Boolean(frontFile);
   const canNext1 = Boolean(selfieData);
   const canNext2 = Boolean(
     ocrData.name_th.trim() &&
@@ -883,23 +902,14 @@ export default function KYCPage() {
         {step === 0 && (
           <div className="animate-fade-up">
             <div className="bg-white rounded-[14px] p-8 shadow-sm border border-gray-200">
-              <h2 className="text-xl font-bold text-navy mb-1.5 flex items-center gap-2.5">💳 อัปโหลดบัตรประชาชน</h2>
-              <p className="text-[13px] text-gray-400 mb-7">ถ่ายภาพหรืออัปโหลดบัตรประชาชนด้านหน้าและด้านหลัง</p>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-xs font-bold text-navy mb-2">ด้านหน้า <span className="text-status-red">*</span></p>
-                  <label className={"block border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all " + (frontPreview ? "border-status-green bg-status-green-light" : "border-gray-200 bg-gray-50 hover:border-navy-3")}>
-                    <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileUpload(e, "front")} />
-                    {frontPreview ? <img src={frontPreview} className="w-full max-h-[160px] object-cover rounded-lg mx-auto" alt="ID front" /> : <><span className="text-[40px] block mb-3">📸</span><h4 className="text-sm font-semibold text-navy mb-1">เลือกรูปด้านหน้า</h4><p className="text-xs text-gray-400">JPG, PNG ไม่เกิน 10MB</p></>}
-                  </label>
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-navy mb-2">ด้านหลัง <span className="text-status-red">*</span></p>
-                  <label className={"block border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all " + (backPreview ? "border-status-green bg-status-green-light" : "border-gray-200 bg-gray-50 hover:border-navy-3")}>
-                    <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileUpload(e, "back")} />
-                    {backPreview ? <img src={backPreview} className="w-full max-h-[160px] object-cover rounded-lg mx-auto" alt="ID back" /> : <><span className="text-[40px] block mb-3">📸</span><h4 className="text-sm font-semibold text-navy mb-1">เลือกรูปด้านหลัง</h4><p className="text-xs text-gray-400">JPG, PNG ไม่เกิน 10MB</p></>}
-                  </label>
-                </div>
+              <h2 className="text-xl font-bold text-navy mb-1.5 flex items-center gap-2.5">💳 อัปโหลดบัตรประชาชน (ด้านหน้า)</h2>
+              <p className="text-[13px] text-gray-400 mb-7">อัปโหลดเฉพาะบัตรประชาชนด้านหน้า ส่วนข้อมูลตรวจสอบหลักใช้จากการอ่านชิปบัตร</p>
+              <div>
+                <p className="text-xs font-bold text-navy mb-2">ด้านหน้า <span className="text-status-red">*</span></p>
+                <label className={"block border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all " + (frontPreview ? "border-status-green bg-status-green-light" : "border-gray-200 bg-gray-50 hover:border-navy-3")}>
+                  <input type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
+                  {frontPreview ? <img src={frontPreview} className="w-full max-h-[200px] object-cover rounded-lg mx-auto" alt="ID front" /> : <><span className="text-[40px] block mb-3">📸</span><h4 className="text-sm font-semibold text-navy mb-1">เลือกรูปด้านหน้า</h4><p className="text-xs text-gray-400">JPG, PNG ไม่เกิน 10MB</p></>}
+                </label>
               </div>
               <div className="flex justify-end mt-6 pt-6 border-t border-gray-200">
                 <button onClick={() => { if (canNext0) setStep(1); }} disabled={!canNext0} className="px-7 py-2.5 bg-gradient-to-br from-navy-2 to-navy-3 text-white rounded-md text-sm font-bold shadow-[0_4px_14px_rgba(17,34,64,0.3)] disabled:opacity-40 transition-all hover:-translate-y-0.5 border-none cursor-pointer">ถัดไป →</button>
@@ -1088,12 +1098,53 @@ export default function KYCPage() {
                   <strong>OTP Reference:</strong> {otpReference || "-"}
                   <br />
                   <strong>Email Verified:</strong> {isEmailVerified ? "Yes" : "No"}
+                  <br />
+                  <strong>PDPA Consent:</strong> {consentGeneral ? "Accepted" : "Pending"}
+                  <br />
+                  <strong>Biometric Consent:</strong> {consentBiometric ? "Accepted" : "Pending"}
                 </p>
+              </div>
+
+              <div className="border border-gray-200 rounded-xl p-5 text-left mb-6 bg-gray-50">
+                <h3 className="text-sm font-bold text-navy mb-3">ประกาศความเป็นส่วนตัว (PDPA)</h3>
+                <div className="text-xs text-gray-700 leading-6 space-y-1">
+                  <p><strong>วัตถุประสงค์:</strong> เพื่อพิสูจน์/ยืนยันตัวตน, ตรวจสอบสิทธิ์ใช้งานและการลงนาม, และเก็บหลักฐานเพื่อการตรวจสอบย้อนหลังตามกฎหมาย</p>
+                  <p><strong>ข้อมูลที่เก็บ:</strong> ภาพบัตรประชาชนด้านหน้า, ข้อมูลจากชิปบัตร, ภาพใบหน้า (selfie), และบันทึกยืนยัน OTP</p>
+                  <p><strong>ระยะเวลาจัดเก็บ:</strong> ไม่เกิน {PDPA_RETENTION_DAYS} วัน (10 ปี) หรือเท่าที่กฎหมายกำหนด แล้วลบ/ทำให้ไม่สามารถระบุตัวตนได้</p>
+                  <p><strong>การเปิดเผยข้อมูล:</strong> เฉพาะเจ้าหน้าที่ผู้ได้รับมอบหมายและผู้ประมวลผลข้อมูลที่จำเป็นต่อการให้บริการระบบ</p>
+                  <p><strong>สิทธิของเจ้าของข้อมูล:</strong> ขอเข้าถึง/แก้ไข/ลบข้อมูล, เพิกถอนความยินยอม, และร้องเรียนต่อหน่วยงานกำกับ</p>
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  <label className="flex items-start gap-2 text-xs text-gray-800">
+                    <input
+                      type="checkbox"
+                      checked={consentGeneral}
+                      onChange={(e) => setConsentGeneral(e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span>ข้าพเจ้าได้อ่านและรับทราบประกาศความเป็นส่วนตัว รวมถึงยินยอมให้เก็บ ใช้ และเปิดเผยข้อมูลส่วนบุคคลตามวัตถุประสงค์ข้างต้น</span>
+                  </label>
+                  <label className="flex items-start gap-2 text-xs text-gray-800">
+                    <input
+                      type="checkbox"
+                      checked={consentBiometric}
+                      onChange={(e) => setConsentBiometric(e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span>ข้าพเจ้ายินยอมโดยชัดแจ้งให้ประมวลผลข้อมูลชีวมิติ (ภาพใบหน้า/selfie และภาพจากชิปบัตร) เพื่อการยืนยันตัวตน</span>
+                  </label>
+                </div>
+                <p className="mt-3 text-[11px] text-gray-500">Consent Version: {PDPA_NOTICE_VERSION}</p>
               </div>
 
               <div className="flex gap-3 justify-center">
                 <button onClick={() => setStep(2)} className="px-5 py-2.5 bg-white text-gray-600 border border-gray-200 rounded-md text-sm font-semibold cursor-pointer">← ย้อนกลับ</button>
-                <button onClick={handleSubmit} disabled={loading || !isEmailVerified || !otpVerifiedAt} className="px-10 py-3 bg-gradient-to-br from-gold to-gold-2 text-navy rounded-md text-sm font-bold shadow-gold hover:-translate-y-0.5 transition-all border-none cursor-pointer disabled:opacity-60 flex items-center gap-2">
+                <button
+                  onClick={handleSubmit}
+                  disabled={loading || !isEmailVerified || !otpVerifiedAt || !consentGeneral || !consentBiometric}
+                  className="px-10 py-3 bg-gradient-to-br from-gold to-gold-2 text-navy rounded-md text-sm font-bold shadow-gold hover:-translate-y-0.5 transition-all border-none cursor-pointer disabled:opacity-60 flex items-center gap-2"
+                >
                   {loading ? <span className="inline-block w-4 h-4 border-2 border-navy/30 border-t-navy rounded-full animate-spin" /> : "✅ ส่ง KYC"}
                 </button>
               </div>
