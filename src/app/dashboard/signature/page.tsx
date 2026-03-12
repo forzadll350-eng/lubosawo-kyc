@@ -35,6 +35,24 @@ export default function SignaturePage() {
     if (tab === 'draw') initDrawCanvas()
   }, [tab])
 
+  function getErrorMessage(err: unknown): string {
+    if (err instanceof Error) return err.message
+    if (typeof err === 'object' && err !== null) {
+      const obj = err as Record<string, unknown>
+      const fields = ['message', 'error', 'hint', 'details', 'code']
+      const picked = fields
+        .map((k) => obj[k])
+        .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+      if (picked.length > 0) return picked.join(' | ')
+      try {
+        return JSON.stringify(err)
+      } catch {
+        return String(err)
+      }
+    }
+    return String(err)
+  }
+
   function initDrawCanvas() {
     const canvas = drawCanvasRef.current
     if (!canvas) return
@@ -330,7 +348,7 @@ export default function SignaturePage() {
           upsert: true,
         })
 
-      if (uploadError) throw uploadError
+      if (uploadError) throw new Error(getErrorMessage(uploadError))
 
       const { data: urlData } = supabase.storage
         .from('signatures')
@@ -349,7 +367,7 @@ export default function SignaturePage() {
           is_active: true,
         })
 
-      if (dbError) throw dbError
+      if (dbError) throw new Error(getErrorMessage(dbError))
 
       setExistingSignature(urlData.publicUrl)
       setMessage('✅ บันทึกลายเซ็นสำเร็จ!')
@@ -357,7 +375,7 @@ export default function SignaturePage() {
       setProcessedPreview(null)
       if (tab === 'draw') clearDraw()
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = getErrorMessage(err)
       setMessage(`❌ เกิดข้อผิดพลาด: ${msg}`)
     } finally {
       setLoading(false)
@@ -387,7 +405,7 @@ export default function SignaturePage() {
           contentType: 'image/png',
           upsert: true,
         })
-      if (uploadError) throw uploadError
+      if (uploadError) throw new Error(getErrorMessage(uploadError))
 
       const { data: urlData } = supabase.storage
         .from('signatures')
@@ -400,7 +418,7 @@ export default function SignaturePage() {
           signature_url: urlData.publicUrl,
           is_active: false,
         })
-      if (dbError) throw dbError
+      if (dbError) throw new Error(getErrorMessage(dbError))
 
       setExistingStamp(urlData.publicUrl)
       localStorage.setItem(`lubosawo_stamp_url_${user.id}`, urlData.publicUrl)
@@ -409,7 +427,7 @@ export default function SignaturePage() {
       setStampMessage('Stamp saved')
       if (stampInputRef.current) stampInputRef.current.value = ''
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = getErrorMessage(err)
       setStampMessage(`Failed to save stamp: ${msg}`)
     } finally {
       setStampLoading(false)
