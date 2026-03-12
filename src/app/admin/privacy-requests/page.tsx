@@ -18,11 +18,15 @@ type PdpaRequest = {
   requested_at: string;
   responded_at: string | null;
   created_at: string;
-  user_profiles?: {
+  requester?: {
     full_name?: string | null;
     email?: string | null;
     department?: string | null;
     position?: string | null;
+  } | null;
+  responder?: {
+    full_name?: string | null;
+    email?: string | null;
   } | null;
 };
 
@@ -68,7 +72,9 @@ export default function AdminPrivacyRequestsPage() {
   async function loadRequests() {
     const { data, error: reqError } = await supabase
       .from("pdpa_data_requests")
-      .select("*, user_profiles(full_name,email,department,position)")
+      .select(
+        "*, requester:user_profiles!pdpa_data_requests_user_id_fkey(full_name,email,department,position), responder:user_profiles!pdpa_data_requests_responder_user_id_fkey(full_name,email)"
+      )
       .order("created_at", { ascending: false });
 
     if (reqError) {
@@ -321,8 +327,8 @@ export default function AdminPrivacyRequestsPage() {
                   filtered.map((request) => (
                     <tr key={request.id} className="hover:bg-gray-50">
                       <td className="px-4 py-3 border-b border-gray-100">
-                        <div className="text-[13px] font-semibold text-navy">{request.user_profiles?.full_name || "-"}</div>
-                        <small className="text-[11px] text-gray-500">{request.user_profiles?.email || request.user_id}</small>
+                        <div className="text-[13px] font-semibold text-navy">{request.requester?.full_name || "-"}</div>
+                        <small className="text-[11px] text-gray-500">{request.requester?.email || request.user_id}</small>
                       </td>
                       <td className="px-4 py-3 border-b border-gray-100 text-xs text-gray-700">{request.request_type}</td>
                       <td className="px-4 py-3 border-b border-gray-100">
@@ -366,7 +372,7 @@ export default function AdminPrivacyRequestsPage() {
             <div className="px-6 py-4 border-b border-gray-200 sticky top-0 bg-white z-10 flex items-center justify-between">
               <div>
                 <h3 className="text-[17px] font-bold text-navy">พิจารณาคำขอสิทธิ PDPA</h3>
-                <p className="text-[11px] text-gray-500">{selected.user_profiles?.full_name || selected.user_id}</p>
+                <p className="text-[11px] text-gray-500">{selected.requester?.full_name || selected.user_id}</p>
               </div>
               <button
                 onClick={() => setSelected(null)}
@@ -449,4 +455,3 @@ export default function AdminPrivacyRequestsPage() {
     </div>
   );
 }
-
