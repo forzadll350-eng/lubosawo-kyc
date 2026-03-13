@@ -224,12 +224,6 @@ export default function DocumentsPage() {
       return
     }
 
-    // ★ เช็คเลือกตัวเองไหม
-    if (selectedSigners.some(s => s.signer_id === currentUserId)) {
-      setMessage('❌ ไม่สามารถเลือกตัวเองเป็นผู้ลงนามได้')
-      return
-    }
-
     // ★ เช็คเลือกซ้ำ
     const ids = selectedSigners.map(s => s.signer_id)
     if (new Set(ids).size !== ids.length) {
@@ -288,8 +282,8 @@ export default function DocumentsPage() {
     return (bytes / 1048576).toFixed(1) + ' MB'
   }
 
-  // ★ กรองผู้ลงนาม: ไม่แสดงตัวเอง
-  const availableSigners = signers.filter(s => s.id !== currentUserId)
+  // อนุญาตให้ส่งเอกสารให้ตัวเองลงนามได้
+  const availableSigners = signers
 
   if (loading) return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -435,7 +429,7 @@ export default function DocumentsPage() {
                     <option value="">-- เลือกผู้ลงนาม --</option>
                     {availableSigners.map(u => (
                       <option key={u.id} value={u.id} disabled={selectedSigners.some((ss, si) => si !== i && ss.signer_id === u.id)}>
-                        {u.full_name} {u.position ? `(${u.position})` : ''} {u.department ? `- ${u.department}` : ''}
+                        {u.full_name}{u.id === currentUserId ? ' (ฉัน)' : ''} {u.position ? `(${u.position})` : ''} {u.department ? `- ${u.department}` : ''}
                       </option>
                     ))}
                   </select>
