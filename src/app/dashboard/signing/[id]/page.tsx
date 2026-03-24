@@ -345,34 +345,45 @@ export default function SignDocumentPage() {
         year: 'numeric', month: 'long', day: 'numeric'
       })
 
+      const nameText = `(${profile?.full_name || ''})`
+      const positionText = profile?.position || ''
+      const dateText = signDate
+      const nameSize = 9
+      const subTextSize = 8
       const textY = sigPosition.pdfY - sigHeight / 2 - 15
-      const textX = sigPosition.pdfX - sigWidth / 2
+      const centerX = sigPosition.pdfX
 
-      targetPage.drawText(`(${profile?.full_name || ''})`, {
-        x: textX, y: textY, size: 9, font: thaiFont, color: rgb(0, 0, 0)
+      const nameWidth = thaiFont.widthOfTextAtSize(nameText, nameSize)
+      const positionWidth = thaiFont.widthOfTextAtSize(positionText, subTextSize)
+      const dateWidth = thaiFont.widthOfTextAtSize(dateText, subTextSize)
+
+      targetPage.drawText(nameText, {
+        x: centerX - nameWidth / 2, y: textY, size: nameSize, font: thaiFont, color: rgb(0, 0, 0)
       })
-      targetPage.drawText(profile?.position || '', {
-        x: textX, y: textY - 13, size: 8, font: thaiFont, color: rgb(0.3, 0.3, 0.3)
+      targetPage.drawText(positionText, {
+        x: centerX - positionWidth / 2, y: textY - 13, size: subTextSize, font: thaiFont, color: rgb(0.3, 0.3, 0.3)
       })
-      targetPage.drawText(signDate, {
-        x: textX, y: textY - 25, size: 8, font: thaiFont, color: rgb(0.3, 0.3, 0.3)
+      targetPage.drawText(dateText, {
+        x: centerX - dateWidth / 2, y: textY - 25, size: subTextSize, font: thaiFont, color: rgb(0.3, 0.3, 0.3)
       })
 
       // QR Code
       const qrBase64 = qrDataUrl.split(',')[1]
       const qrBytes = Uint8Array.from(atob(qrBase64), c => c.charCodeAt(0))
       const qrImage = await pdfDoc.embedPng(qrBytes)
-      const qrSize = 60
+      const qrSize = 30
+      const qrX = sigPosition.pdfX + sigWidth / 2 + 2
+      const qrY = sigPosition.pdfY - qrSize / 2
 
       targetPage.drawImage(qrImage, {
-        x: sigPosition.pdfX + sigWidth / 2 + 10,
-        y: sigPosition.pdfY - qrSize / 2,
+        x: qrX,
+        y: qrY,
         width: qrSize, height: qrSize,
       })
 
       targetPage.drawText('Scan to verify', {
-        x: sigPosition.pdfX + sigWidth / 2 + 10,
-        y: sigPosition.pdfY - qrSize / 2 - 12,
+        x: qrX,
+        y: qrY - 10,
         size: 6, font: thaiFont, color: rgb(0.4, 0.4, 0.4),
       })
 
@@ -613,7 +624,7 @@ export default function SignDocumentPage() {
               className={canSign ? "cursor-crosshair block bg-white shadow-lg" : "cursor-not-allowed block bg-white shadow-lg opacity-90"} />
             {sigPosition && sigPosition.page === i && signatureUrl && canSign && (
               <div className="absolute pointer-events-none" style={{ left: sigPosition.x - 75, top: sigPosition.y - 30 }}>
-                <div className="flex items-start gap-2">
+                <div className="flex items-start gap-1">
                   <div className="relative">
                     {includeStamp && stampUrl && (
                       <img
@@ -624,11 +635,11 @@ export default function SignDocumentPage() {
                       />
                     )}
                     <img src={signatureUrl} alt="sig" className="border-2 border-green-400 border-dashed rounded bg-white/80" style={{ width: 150 }} />
-                    <p className="text-xs mt-0.5">({profile?.full_name})</p>
-                    <p className="text-gray-500" style={{ fontSize: 10 }}>{profile?.position}</p>
+                    <p className="text-xs mt-0.5 text-center">({profile?.full_name})</p>
+                    <p className="text-gray-500 text-center" style={{ fontSize: 10 }}>{profile?.position}</p>
                   </div>
                   <div className="bg-white border border-dashed border-blue-400 rounded p-1">
-                    <div className="bg-gray-200 flex items-center justify-center" style={{ width: 60, height: 60 }}>
+                    <div className="bg-gray-200 flex items-center justify-center" style={{ width: 30, height: 30 }}>
                       <span className="text-xs text-gray-500">QR</span>
                     </div>
                     <p className="text-center" style={{ fontSize: 8 }}>Scan to verify</p>
