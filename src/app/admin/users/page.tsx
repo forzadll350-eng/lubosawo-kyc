@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { createClient, ensureEmbedSessionReady, reportKycEmbedRoute, resolveEmbedAuthState } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
+import { goWithEmbed } from '@/lib/embed'
 
 type UserProfile = {
   id: string
@@ -44,8 +45,20 @@ export default function AdminUsersPage() {
   useEffect(() => { checkAdminAndLoad() }, [])
 
   async function checkAdminAndLoad() {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { router.push('/'); return }
+    const authState = await resolveEmbedAuthState(supabase)
+    if (authState.status === 'signed-out') {
+      console.info('[KYC-EMBED] route fallback /')
+      goWithEmbed(router, '/')
+      return
+    }
+    if (!authState.user) {
+      console.info('[KYC-EMBED] auth bootstrap pending /admin/users')
+      window.setTimeout(checkAdminAndLoad, 300)
+      return
+    }
+    const user = authState.user
+    console.info('[KYC-EMBED] route boot ok /admin/users')
+    reportKycEmbedRoute('/admin/users')
     setAdminEmail(user.email || '')
 
     const { data: profile } = await supabase
@@ -55,7 +68,7 @@ export default function AdminUsersPage() {
       .single()
 
     if (!profile || ![1, 2].includes(profile.role_id)) {
-      router.push('/dashboard')
+      goWithEmbed(router, '/dashboard')
       return
     }
 
@@ -111,6 +124,7 @@ export default function AdminUsersPage() {
 
       if (error) throw error
 
+      await ensureEmbedSessionReady(supabase)
       const { data: { user } } = await supabase.auth.getUser()
       await supabase.from('audit_logs').insert({
         user_id: user?.id,
@@ -182,12 +196,12 @@ export default function AdminUsersPage() {
         <nav className="flex-1 p-3">
           <div className="text-[10px] font-bold text-white/30 tracking-widest uppercase px-2 py-1.5">เมนูแอดมิน</div>
 
-          <button onClick={() => router.push('/admin')}
+          <button onClick={() => goWithEmbed(router, '/admin')}
             className="flex items-center gap-2.5 w-full text-left px-3 py-2.5 rounded-lg text-[13px] font-medium mb-0.5 transition-all border-none cursor-pointer text-white/65 hover:bg-white/7 hover:text-white bg-transparent">
             <span className="text-base w-5 text-center">📋</span>ตรวจสอบ KYC
           </button>
 
-          <button onClick={() => router.push('/admin/users')}
+          <button onClick={() => goWithEmbed(router, '/admin/users')}
             className="flex items-center gap-2.5 w-full text-left px-3 py-2.5 rounded-lg text-[13px] font-bold mb-0.5 transition-all border-none cursor-pointer bg-gold/18 text-gold-2">
             <span className="text-base w-5 text-center">👥</span>จัดการผู้ใช้
             <span className="ml-auto bg-gold text-navy text-[10px] font-bold px-1.5 py-0.5 rounded-full">{stats.total}</span>
@@ -195,7 +209,7 @@ export default function AdminUsersPage() {
 
           <div className="text-[10px] font-bold text-white/30 tracking-widest uppercase px-2 py-1.5 mt-4">ลิงก์ลัด</div>
 
-          <button onClick={() => router.push('/dashboard')}
+          <button onClick={() => goWithEmbed(router, '/dashboard')}
             className="flex items-center gap-2.5 w-full text-left px-3 py-2.5 rounded-lg text-[13px] font-medium mb-0.5 transition-all border-none cursor-pointer text-white/65 hover:bg-white/7 hover:text-white bg-transparent">
             <span className="text-base w-5 text-center">📊</span>ไป Dashboard
           </button>
@@ -209,7 +223,7 @@ export default function AdminUsersPage() {
               <small className="text-white/40 text-[10px]">{adminEmail}</small>
             </div>
           </div>
-          <button onClick={async () => { await supabase.auth.signOut(); router.push('/') }}
+          <button onClick={async () => { await supabase.auth.signOut(); goWithEmbed(router, '/', true) }}
             className="w-full mt-2 py-2 text-xs text-white/50 hover:text-white bg-white/5 hover:bg-white/10 rounded-md transition-all border-none cursor-pointer">
             ออกจากระบบ
           </button>
@@ -314,7 +328,7 @@ export default function AdminUsersPage() {
                       </td>
                       <td className="px-4 py-3 border-b border-gray-100">
                         {u.is_active !== false
-                          ? <span className="text-green-600 text-[11px] font-bold">🟢 ใช้งาน</span>
+                          ? <span className="text-green-600 text-[11px] font-bold">�xx� ๒�`�0�!า�"</span>
                           : <span className="text-red-600 text-[11px] font-bold">🔴 ปิดใช้งาน</span>}
                       </td>
                       <td className="px-4 py-3 border-b border-gray-100 text-xs text-gray-500">
@@ -381,7 +395,7 @@ export default function AdminUsersPage() {
             <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-2xl flex gap-2">
               <button onClick={saveEdit} disabled={saving}
                 className="flex-1 py-2.5 bg-navy text-white rounded-lg font-semibold hover:bg-navy-3 disabled:opacity-50 border-none cursor-pointer">
-                {saving ? '⏳ กำลังบันทึก...' : '💾 บันทึก'}
+                {saving ? '? ???????????...' : '?? ??????'}
               </button>
               <button onClick={() => setEditUser(null)}
                 className="flex-1 py-2.5 bg-gray-200 text-gray-600 rounded-lg font-semibold hover:bg-gray-300 border-none cursor-pointer">
@@ -394,3 +408,6 @@ export default function AdminUsersPage() {
     </div>
   )
 }
+
+
+

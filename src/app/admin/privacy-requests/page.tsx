@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { createClient, ensureEmbedSessionReady, reportKycEmbedRoute, resolveEmbedAuthState } from "@/lib/supabase/client";
 import { logAudit } from "@/lib/audit";
+import { goWithEmbed } from "@/lib/embed";
 
 type RequestStatus = "submitted" | "in_review" | "completed" | "rejected" | "cancelled";
 
@@ -86,13 +87,20 @@ export default function AdminPrivacyRequestsPage() {
 
   useEffect(() => {
     async function init() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) {
-        router.push("/");
+      const authState = await resolveEmbedAuthState(supabase);
+      if (authState.status === "signed-out") {
+        console.info("[KYC-EMBED] route fallback /");
+        goWithEmbed(router, "/");
         return;
       }
+      if (!authState.user) {
+        console.info("[KYC-EMBED] auth bootstrap pending /admin/privacy-requests");
+        window.setTimeout(init, 300);
+        return;
+      }
+      const user = authState.user;
+      console.info("[KYC-EMBED] route boot ok /admin/privacy-requests");
+      reportKycEmbedRoute('/admin/privacy-requests');
       setAdminUserId(user.id);
       setAdminEmail(user.email || "");
 
@@ -103,7 +111,7 @@ export default function AdminPrivacyRequestsPage() {
         .single();
 
       if (profileError || !profile || ![1, 2].includes(profile.role_id)) {
-        router.push("/dashboard");
+        goWithEmbed(router, "/dashboard");
         return;
       }
 
@@ -193,19 +201,19 @@ export default function AdminPrivacyRequestsPage() {
         <nav className="flex-1 p-3">
           <div className="text-[10px] font-bold text-white/30 tracking-widest uppercase px-2 py-1.5">เมนูแอดมิน</div>
           <button
-            onClick={() => router.push("/admin")}
+            onClick={() => goWithEmbed(router, "/admin")}
             className="flex items-center gap-2.5 w-full text-left px-3 py-2.5 rounded-lg text-[13px] font-medium mb-0.5 transition-all border-none cursor-pointer text-white/65 hover:bg-white/7 hover:text-white bg-transparent"
           >
             <span className="text-base w-5 text-center">📋</span>ตรวจสอบ KYC
           </button>
           <button
-            onClick={() => router.push("/admin/users")}
+            onClick={() => goWithEmbed(router, "/admin/users")}
             className="flex items-center gap-2.5 w-full text-left px-3 py-2.5 rounded-lg text-[13px] font-medium mb-0.5 transition-all border-none cursor-pointer text-white/65 hover:bg-white/7 hover:text-white bg-transparent"
           >
             <span className="text-base w-5 text-center">👥</span>จัดการผู้ใช้
           </button>
           <button
-            onClick={() => router.push("/admin/privacy-requests")}
+            onClick={() => goWithEmbed(router, "/admin/privacy-requests")}
             className="flex items-center gap-2.5 w-full text-left px-3 py-2.5 rounded-lg text-[13px] font-bold mb-0.5 transition-all border-none cursor-pointer bg-gold/18 text-gold-2"
           >
             <span className="text-base w-5 text-center">🛡️</span>คำขอสิทธิ PDPA
@@ -215,7 +223,7 @@ export default function AdminPrivacyRequestsPage() {
           </button>
           <div className="text-[10px] font-bold text-white/30 tracking-widest uppercase px-2 py-1.5 mt-4">ลิงก์ลัด</div>
           <button
-            onClick={() => router.push("/dashboard")}
+            onClick={() => goWithEmbed(router, "/dashboard")}
             className="flex items-center gap-2.5 w-full text-left px-3 py-2.5 rounded-lg text-[13px] font-medium mb-0.5 transition-all border-none cursor-pointer text-white/65 hover:bg-white/7 hover:text-white bg-transparent"
           >
             <span className="text-base w-5 text-center">📊</span>ไป Dashboard
@@ -235,7 +243,7 @@ export default function AdminPrivacyRequestsPage() {
           <button
             onClick={async () => {
               await supabase.auth.signOut();
-              router.push("/");
+              goWithEmbed(router, "/", true);
             }}
             className="w-full mt-2 py-2 text-xs text-white/50 hover:text-white bg-white/5 hover:bg-white/10 rounded-md transition-all border-none cursor-pointer"
           >
@@ -440,7 +448,7 @@ export default function AdminPrivacyRequestsPage() {
                 disabled={saving}
                 className="flex-1 py-2.5 bg-navy text-white rounded-lg font-semibold hover:bg-navy-3 disabled:opacity-60"
               >
-                {saving ? "กำลังบันทึก..." : "บันทึกผล"}
+                {saving ? "???????????..." : "????????"}
               </button>
               <button
                 onClick={() => setSelected(null)}
@@ -455,3 +463,7 @@ export default function AdminPrivacyRequestsPage() {
     </div>
   );
 }
+
+
+
+
